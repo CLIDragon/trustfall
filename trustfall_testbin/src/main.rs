@@ -17,7 +17,7 @@ use std::{
 
 use async_graphql_parser::{parse_query, parse_schema};
 use itertools::Itertools;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use trustfall_core::{
     filesystem_interpreter::{FilesystemInterpreter, FilesystemVertex},
@@ -25,6 +25,7 @@ use trustfall_core::{
     interpreter::{
         error::QueryArgumentsError,
         execution,
+        ptrace::{ptap_results, PAdapterTap, PTrace},
         trace::{tap_results, AdapterTap, Trace},
         Adapter,
     },
@@ -207,6 +208,7 @@ fn trace_with_adapter<'a, AdapterT>(
 }
 
 fn trace(path: &str) {
+    // :path: is an .ir.ron file.
     let input_data = fs::read_to_string(path).unwrap();
     let test_query_result: TestIRQueryResult = ron::from_str(&input_data).unwrap();
     let test_query = test_query_result.unwrap();
@@ -237,6 +239,77 @@ fn trace(path: &str) {
         "nullables" => {
             let adapter = NullablesAdapter;
             trace_with_adapter(adapter, test_query, expected_results_func);
+        }
+        _ => unreachable!("Unknown schema name: {}", test_query.schema_name),
+    };
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "Vertex: Debug + Clone + Serialize + DeserializeOwned")]
+pub struct POutputTrace<Vertex> {
+    pub schema_name: String,
+
+    pub trace: PTrace<Vertex>,
+}
+
+fn perf_trace_with_adapter<'a, AdapterT>(adapter: AdapterT, test_query: TestIRQuery)
+where
+    AdapterT: Adapter<'a> + Clone + 'a,
+    AdapterT::Vertex: Clone + Debug + PartialEq + Eq + Serialize + DeserializeOwned,
+{
+    let query = Arc::new(test_query.ir_query.clone().try_into().unwrap());
+    let arguments: Arc<BTreeMap<_, _>> = Arc::new(
+        test_query.arguments.iter().map(|(k, v)| (Arc::from(k.to_owned()), v.clone())).collect(),
+    );
+
+    let tracer =
+        Rc::new(RefCell::new(PTrace::new(test_query.ir_query.clone(), test_query.arguments)));
+    let mut adapter_tap = Arc::new(PAdapterTap::new(adapter, tracer));
+
+    let execution_result = execution::interpret_ir(adapter_tap.clone(), query, arguments);
+    match execution_result {
+        Ok(results_iter) => {
+            // tap_results is important to produce all the traced operations.
+            // without it only the first few queries are traced. This is
+            // intentional behaviour - as the query is lazy, it won't run
+            // unless the results are asked for.
+            ptap_results(adapter_tap.clone(), results_iter).collect_vec();
+
+            let trace = Arc::make_mut(&mut adapter_tap).clone().finish();
+            let data = POutputTrace { schema_name: test_query.schema_name, trace };
+
+            println!("{}", serialize_to_ron(&data));
+        }
+        Err(e) => {
+            println!("{}", serialize_to_ron(&e));
+        }
+    }
+}
+
+fn perf_trace(path: &str) {
+    // :path: is an .ir.ron file.
+    let input_data = fs::read_to_string(path).unwrap();
+    let test_query_result: TestIRQueryResult = ron::from_str(&input_data).unwrap();
+    let test_query = test_query_result.unwrap();
+
+    let mut outputs_path = PathBuf::from_str(path).unwrap();
+    let ir_file_name = outputs_path.file_name().expect("not a file").to_str().unwrap();
+    let outputs_file_name = ir_file_name.replace(".ir.ron", ".ptrace.ron");
+    outputs_path.pop();
+    outputs_path.push(&outputs_file_name);
+
+    match test_query.schema_name.as_str() {
+        "filesystem" => {
+            let adapter = FilesystemInterpreter::new(".".to_owned());
+            perf_trace_with_adapter(adapter, test_query);
+        }
+        "numbers" => {
+            let adapter = NumbersAdapter::new();
+            perf_trace_with_adapter(adapter, test_query);
+        }
+        "nullables" => {
+            let adapter = NullablesAdapter;
+            perf_trace_with_adapter(adapter, test_query);
         }
         _ => unreachable!("Unknown schema name: {}", test_query.schema_name),
     };
@@ -363,6 +436,13 @@ fn main() {
             Some(path) => {
                 assert!(reversed_args.is_empty());
                 trace(path)
+            }
+        },
+        Some("perf_trace") => match reversed_args.pop() {
+            None => panic!("No filename provided"),
+            Some(path) => {
+                assert!(reversed_args.is_empty());
+                perf_trace(path)
             }
         },
         Some("schema_error") => match reversed_args.pop() {

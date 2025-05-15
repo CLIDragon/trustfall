@@ -117,7 +117,7 @@ where
     }
 }
 
-fn make_iter_with_end_action<T, I: Iterator<Item = T>, F: FnOnce()>(
+pub fn make_iter_with_end_action<T, I: Iterator<Item = T>, F: FnOnce()>(
     inner: I,
     on_end: F,
 ) -> OnIterEnd<T, I, F> {
@@ -142,7 +142,7 @@ where
     }
 }
 
-fn make_iter_with_pre_action<T, I: Iterator<Item = T>, F: Fn()>(
+pub fn make_iter_with_pre_action<T, I: Iterator<Item = T>, F: Fn()>(
     inner: I,
     pre_action: F,
 ) -> PreActionIter<T, I, F> {
