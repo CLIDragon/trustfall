@@ -25,8 +25,6 @@ use super::trace::{FunctionCall, Opid, TraceOp, TraceOpContent, YieldValue};
 pub struct PTrace<Vertex> {
     pub ops: BTreeMap<Opid, PTraceOp<Vertex>>,
 
-    pub ir_query: IRQuery,
-
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub arguments: BTreeMap<String, FieldValue>,
 }
@@ -36,8 +34,8 @@ where
     Vertex: Clone + Debug + PartialEq + Eq + Serialize + DeserializeOwned,
 {
     #[allow(dead_code)]
-    pub fn new(ir_query: IRQuery, arguments: BTreeMap<String, FieldValue>) -> Self {
-        Self { ops: Default::default(), ir_query, arguments }
+    pub fn new(arguments: BTreeMap<String, FieldValue>) -> Self {
+        Self { ops: Default::default(), arguments }
     }
 
     pub fn record(
@@ -94,7 +92,7 @@ where
     pub fn finish(self) -> PTrace<AdapterT::Vertex> {
         // Ensure nothing is reading the trace i.e. we can safely stop interpreting.
         let trace_ref = self.tracer.borrow_mut();
-        let new_trace = PTrace::new(trace_ref.ir_query.clone(), trace_ref.arguments.clone());
+        let new_trace = PTrace::new(trace_ref.arguments.clone());
         drop(trace_ref);
         self.tracer.replace(new_trace)
     }
@@ -108,36 +106,30 @@ where
     AdapterT: Adapter<'vertex> + 'vertex,
     AdapterT::Vertex: Clone + Debug + PartialEq + Eq + Serialize + DeserializeOwned + 'vertex,
 {
-    result_iter.inspect(move |result| {
+
+    Box::new(make_iter_with_perf_span(result_iter, move |result, d| {
         adapter_tap.tracer.borrow_mut().record(
             TraceOpContent::ProduceQueryResult(result.clone()),
             None,
-            None,
+            Some(d),
         );
-    })
+        result
+    }))
 }
 
-pub struct PerfSpanIter<'vertex, I, T, F, AdapterT>
+pub struct PerfSpanIter<I, T, F>
 where
-    T: Clone,
     I: Iterator<Item = T>,
-    AdapterT: Adapter<'vertex>,
-    AdapterT::Vertex: Clone + Debug + PartialEq + Eq + Serialize + DeserializeOwned + 'vertex,
-    F: Fn(T) -> TraceOpContent<AdapterT::Vertex>,
+    F: Fn(T, Duration) -> T,
 {
     inner: I,
-    tracer_ref: Rc<RefCell<PTrace<AdapterT::Vertex>>>,
-    opid: Option<Opid>,
-    name: F,
+    post_action: F,
 }
 
-impl<'vertex, I, T, AdapterT, F> Iterator for PerfSpanIter<'vertex, I, T, F, AdapterT>
+impl<I, T, F> Iterator for PerfSpanIter<I, T, F>
 where
-    T: Clone,
     I: Iterator<Item = T>,
-    AdapterT: Adapter<'vertex>,
-    AdapterT::Vertex: Clone + Debug + PartialEq + Eq + Serialize + DeserializeOwned + 'vertex,
-    F: Fn(T) -> TraceOpContent<AdapterT::Vertex>,
+    F: Fn(T, Duration) -> T,
 {
     type Item = T;
 
@@ -145,31 +137,19 @@ where
         let start = Instant::now();
         let item = self.inner.next();
         let time = start.elapsed();
-        if item.is_some() {
-            self.tracer_ref.borrow_mut().record(
-                (self.name)(item.as_ref().unwrap().clone()),
-                self.opid,
-                Some(time),
-            );
+        match item {
+            Some(item) => Some((self.post_action)(item, time)),
+            None => None,
         }
-        item
     }
 }
 
-pub fn make_iter_with_perf_span<'vertex, I, T, F, AdapterT>(
-    inner: I,
-    tracer_ref: Rc<RefCell<PTrace<AdapterT::Vertex>>>,
-    opid: Option<Opid>,
-    name: F,
-) -> PerfSpanIter<'vertex, I, T, F, AdapterT>
+pub fn make_iter_with_perf_span<I, T, F>(inner: I, post_action: F) -> PerfSpanIter<I, T, F>
 where
-    T: Clone,
     I: Iterator<Item = T>,
-    AdapterT: Adapter<'vertex>,
-    AdapterT::Vertex: Clone + Debug + PartialEq + Eq + Serialize + DeserializeOwned + 'vertex,
-    F: Fn(T) -> TraceOpContent<AdapterT::Vertex>,
+    F: Fn(T, Duration) -> T,
 {
-    PerfSpanIter { inner, tracer_ref, opid, name }
+    PerfSpanIter { inner, post_action }
 }
 
 impl<'vertex, AdapterT> Adapter<'vertex> for PAdapterTap<'vertex, AdapterT>
@@ -197,12 +177,14 @@ where
         let tracer_ref_1 = self.tracer.clone();
         let tracer_ref_2 = self.tracer.clone();
         // let x = Box::new(make_iter_with_perf_span(inner_iter, tracer_ref_1));
-        let x = Box::new(make_iter_with_perf_span::<_, _, _, AdapterT>(
-            inner_iter,
-            tracer_ref_1,
-            Some(call_opid),
-            |v| TraceOpContent::YieldFrom(YieldValue::ResolveStartingVertices(v.clone())),
-        ));
+        let x = Box::new(make_iter_with_perf_span(inner_iter, move |v, d| {
+            tracer_ref_1.borrow_mut().record(
+                TraceOpContent::YieldFrom(YieldValue::ResolveStartingVertices(v.clone())),
+                Some(call_opid),
+                Some(d),
+            );
+            v
+        }));
 
         Box::new(make_iter_with_end_action(x, move || {
             tracer_ref_2.borrow_mut().record(
@@ -236,12 +218,14 @@ where
         let tracer_ref_2 = self.tracer.clone();
         let tracer_ref_3 = self.tracer.clone();
 
-        let x = Box::new(make_iter_with_perf_span::<_, _, _, AdapterT>(
-            contexts,
-            tracer_ref_3,
-            Some(call_opid),
-            |context| TraceOpContent::YieldInto(context.clone().flat_map(&mut |v| v.into_vertex())),
-        ));
+        let x = Box::new(make_iter_with_perf_span(contexts, move |context, d| {
+            tracer_ref_3.borrow_mut().record(
+                TraceOpContent::YieldInto(context.clone().flat_map(&mut |v| v.into_vertex())),
+                Some(call_opid),
+                Some(d),
+            );
+            context
+        }));
 
         let wrapped_contexts = Box::new(make_iter_with_end_action(
             make_iter_with_pre_action(x, move || {
@@ -266,17 +250,17 @@ where
         let tracer_ref_4 = self.tracer.clone();
         let tracer_ref_5 = self.tracer.clone();
 
-        let x = Box::new(make_iter_with_perf_span::<_, _, _, AdapterT>(
-            inner_iter,
-            tracer_ref_5,
-            Some(call_opid),
-            |(context, value)| {
+        let x = Box::new(make_iter_with_perf_span(inner_iter, move |(context, value), d| {
+            tracer_ref_5.borrow_mut().record(
                 TraceOpContent::YieldFrom(YieldValue::ResolveProperty(
                     context.clone().flat_map(&mut |v| v.into_vertex()),
                     value.clone(),
-                ))
-            },
-        ));
+                )),
+                Some(call_opid),
+                Some(d),
+            );
+            (context, value)
+        }));
 
         Box::new(make_iter_with_end_action(x, move || {
             tracer_ref_4.borrow_mut().record(
@@ -311,12 +295,14 @@ where
         let tracer_ref_2 = self.tracer.clone();
         let tracer_ref_3 = self.tracer.clone();
 
-        let x = Box::new(make_iter_with_perf_span::<_, _, _, AdapterT>(
-            contexts,
-            tracer_ref_3,
-            Some(call_opid),
-            |context| TraceOpContent::YieldInto(context.clone().flat_map(&mut |v| v.into_vertex())),
-        ));
+        let x = Box::new(make_iter_with_perf_span(contexts, move |context, d| {
+            tracer_ref_3.borrow_mut().record(
+                TraceOpContent::YieldInto(context.clone().flat_map(&mut |v| v.into_vertex())),
+                Some(call_opid),
+                Some(d),
+            );
+            context
+        }));
 
         let wrapped_contexts = Box::new(make_iter_with_end_action(
             make_iter_with_pre_action(x, move || {
@@ -346,42 +332,46 @@ where
         let tracer_ref_4 = self.tracer.clone();
         let tracer_ref_5 = self.tracer.clone();
 
-        let x = Box::new(inner_iter.map(move |(context, neighbor_iter)| {
-            let mut trace = tracer_ref_5.borrow_mut();
-            let outer_iterator_opid = trace.record(
-                TraceOpContent::YieldFrom(YieldValue::ResolveNeighborsOuter(
-                    context.clone().flat_map(&mut |v| v.into_vertex()),
-                )),
-                Some(call_opid),
-                None,
-            );
-            drop(trace);
+        let x =
+            Box::new(make_iter_with_perf_span(inner_iter, move |(context, neighbor_iter), d| {
+                let mut trace = tracer_ref_5.borrow_mut();
+                let outer_iterator_opid = trace.record(
+                    TraceOpContent::YieldFrom(YieldValue::ResolveNeighborsOuter(
+                        context.clone().flat_map(&mut |v| v.into_vertex()),
+                    )),
+                    Some(call_opid),
+                    Some(d),
+                );
+                drop(trace);
 
-            let tapped_neighbor_iter = Box::new(make_iter_with_perf_span::<_, _, _, AdapterT>(
-                neighbor_iter.enumerate(),
-                tracer_ref_5.clone(),
-                Some(outer_iterator_opid),
-                |(pos, vertex)| {
-                    TraceOpContent::YieldFrom(YieldValue::ResolveNeighborsInner(
-                        pos,
-                        vertex.clone(),
-                    ))
-                }
-            ).map(move |(_, vertex)| { vertex }));
+                let tracer_ref_6 = tracer_ref_5.clone();
+                let tapped_neighbor_iter = Box::new(
+                    make_iter_with_perf_span(neighbor_iter.enumerate(), move |(pos, vertex), d| {
+                        tracer_ref_6.borrow_mut().record(
+                            TraceOpContent::YieldFrom(YieldValue::ResolveNeighborsInner(
+                                pos,
+                                vertex.clone(),
+                            )),
+                            Some(outer_iterator_opid),
+                            Some(d),
+                        );
+                        (pos, vertex)
+                    })
+                    .map(move |(_, vertex)| vertex),
+                );
 
+                let tracer_ref_7 = tracer_ref_5.clone();
+                let final_neighbor_iter: VertexIterator<'vertex, Self::Vertex> =
+                    Box::new(make_iter_with_end_action(tapped_neighbor_iter, move || {
+                        tracer_ref_7.borrow_mut().record(
+                            TraceOpContent::OutputIteratorExhausted,
+                            Some(outer_iterator_opid),
+                            None,
+                        );
+                    }));
 
-            let tracer_ref_7 = tracer_ref_5.clone();
-            let final_neighbor_iter: VertexIterator<'vertex, Self::Vertex> =
-                Box::new(make_iter_with_end_action(tapped_neighbor_iter, move || {
-                    tracer_ref_7.borrow_mut().record(
-                        TraceOpContent::OutputIteratorExhausted,
-                        Some(outer_iterator_opid),
-                        None,
-                    );
+                (context, final_neighbor_iter)
             }));
-
-            (context, final_neighbor_iter)
-        }));
 
         Box::new(make_iter_with_end_action(x, move || {
             tracer_ref_4.borrow_mut().record(
@@ -415,12 +405,14 @@ where
         let tracer_ref_2 = self.tracer.clone();
         let tracer_ref_3 = self.tracer.clone();
 
-        let x = Box::new(make_iter_with_perf_span::<_, _, _, AdapterT>(
-            contexts,
-            tracer_ref_3,
-            Some(call_opid),
-            |context| TraceOpContent::YieldInto(context.clone().flat_map(&mut |v| v.into_vertex())),
-        ));
+        let x = Box::new(make_iter_with_perf_span(contexts, move |context, d| {
+            tracer_ref_3.borrow_mut().record(
+                TraceOpContent::YieldInto(context.clone().flat_map(&mut |v| v.into_vertex())),
+                Some(call_opid),
+                Some(d),
+            );
+            context
+        }));
 
         let wrapped_contexts = Box::new(make_iter_with_end_action(
             make_iter_with_pre_action(x, move || {
@@ -445,17 +437,17 @@ where
         let tracer_ref_4 = self.tracer.clone();
         let tracer_ref_5 = self.tracer.clone();
 
-        let x = Box::new(make_iter_with_perf_span::<_, _, _, AdapterT>(
-            inner_iter,
-            tracer_ref_5,
-            Some(call_opid),
-            |(context, can_coerce)| {
+        let x = Box::new(make_iter_with_perf_span(inner_iter, move |(context, can_coerce), d| {
+            tracer_ref_5.borrow_mut().record(
                 TraceOpContent::YieldFrom(YieldValue::ResolveCoercion(
                     context.clone().flat_map(&mut |v| v.into_vertex()),
                     can_coerce,
-                ))
-            },
-        ));
+                )),
+                Some(call_opid),
+                Some(d),
+            );
+            (context, can_coerce)
+        }));
 
         Box::new(make_iter_with_end_action(x, move || {
             tracer_ref_4.borrow_mut().record(

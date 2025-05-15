@@ -12,7 +12,7 @@ use std::{
     path::PathBuf,
     rc::Rc,
     str::FromStr,
-    sync::Arc,
+    sync::Arc, time::Duration,
 };
 
 use async_graphql_parser::{parse_query, parse_schema};
@@ -248,7 +248,7 @@ fn trace(path: &str) {
 #[serde(bound = "Vertex: Debug + Clone + Serialize + DeserializeOwned")]
 pub struct POutputTrace<Vertex> {
     pub schema_name: String,
-
+    pub time: Duration,
     pub trace: PTrace<Vertex>,
 }
 
@@ -263,9 +263,10 @@ where
     );
 
     let tracer =
-        Rc::new(RefCell::new(PTrace::new(test_query.ir_query.clone(), test_query.arguments)));
+        Rc::new(RefCell::new(PTrace::new(test_query.arguments)));
     let mut adapter_tap = Arc::new(PAdapterTap::new(adapter, tracer));
 
+    let start = std::time::Instant::now();
     let execution_result = execution::interpret_ir(adapter_tap.clone(), query, arguments);
     match execution_result {
         Ok(results_iter) => {
@@ -276,7 +277,7 @@ where
             ptap_results(adapter_tap.clone(), results_iter).collect_vec();
 
             let trace = Arc::make_mut(&mut adapter_tap).clone().finish();
-            let data = POutputTrace { schema_name: test_query.schema_name, trace };
+            let data = POutputTrace { schema_name: test_query.schema_name, time: start.elapsed(), trace };
 
             println!("{}", serialize_to_ron(&data));
         }
