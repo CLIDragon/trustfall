@@ -1,0 +1,71 @@
+Start by reading from top to bottom. Ignore some calls.
+For each Yield call, 
+	if it is a YieldFrom(ResolveStartingVertices), it must be followed by a YieldInto and belongs to that YieldInto
+	if it is a YieldInto that has the same parent as the next YieldFrom,
+then it belongs to that YieldFrom. 
+	if it is a YieldFrom followed by a YieldInto, it belongs to that YieldInto
+
+For each AdvanceInputIterator
+	if it is preceded by a YieldFrom with the same parent.
+		Then the following operations belong to the AdvanceInputIterator and the AdvanceInputIterator belongs to the next YieldInto with a different parent that comes after a YieldFrom of the same parent. 
+
+	if not, then I don't know - enum_missing_ptrace.txt does not have enough info to decide.
+
+
+ResolveStartingVertices is called once, as the very first call.
+
+Assumptions: 
+	(1) No adjacent YieldInto calls. 
+	(2) YieldInto is always followed by a YieldFrom.
+	(2a) A YieldFrom is always preceded by a YieldInto, unless it is a YieldFrom(ResolveStartingVertices) or YieldFrom(ResolveNeighborsInner)
+	(2b) If a YieldFrom follows a YieldFrom, then it must be a YieldFrom(ResolveNeighborsOuter) followed by a YieldFrom(ResolveNeighborsInner) 
+	(2b*) Unless there is a AdvanceInputIterator in between.
+	(2c) Conversely, YieldFrom(ResolveNeighborsOuter) must always be followed by any number of Calls and an equal number of AdvanceInputIterators, and then a YieldFrom(ResolveNeighborsInner) or an OutputIteratorExhausted. (.e. YF C C A A YF is ok, but YF C A C YF is not).
+	(2d) YieldInto always has the same parent as its following YieldFrom
+
+	(3) A YieldFrom followed by a YieldInto must have different parents.
+	(4) A YieldFrom(ResolveStartingVertices) must be followed by a YieldInto, with a different parent.
+	(5) Everything but Call must have a valid parent.
+	(6) Operation ids are unique and chronologically ordered.
+	(7) YieldFrom(ResolveNeighborsInner) is always followed by a YieldInto or OutputIteratorExhausted or AdvanceInputIterator or a YieldFrom(ResolveNeighborsInner)
+	(7a) If it's followed by an OutputIteratorExhausted, then that must be followed by a YieldInto with a different parent.
+	(7b) If it's followed by an AdvanceInputIterator, then this represents the end of a call (e.g. the parent function found what it wanted immediately), and so this should be treated the same as for any other YieldFrom encountering and AdvanceInputIterator.
+	(7c) The YieldFrom(ResolveNeighborsInner) must have the same parent.
+	(8) Inline Call must always follow a YieldFrom
+
+
+
+Steps:
+1. Output data. As little as possible is collected in order to save work
+2. Parse the data (visualise.py)
+3. Analyse the data (visualise.py)
+
+
+Tasks:
+(1) Minimise the amount of data collected (depends on (2))
+	* Keep the minimum data required to extract the duration and callstack of each 
+	  function call.
+	* Candidates for removal are AdvanceInputIterator, InputIteratorExhausted,
+	  and OutputIteratorExhausted.
+(2) Rewrite the algorithm in rust in a simpler form (depends on (3))
+	* Where the heck do the calls after a CCAA callstack go and does it matter?
+(3) Generate test data for the old algorithm. 
+	:) I need examples that have ProduceQueryResult.
+	:) Basic comparison data (vis_old.txt).
+
+
+ID targets:
+(1) Callstacks that have no YieldFrom (e.g. enum_discriminant_undefined_non_exhaustive_variant).
+(2) Short callstacks that take a long time (e.g. derive_trait_impl_removed)
+(3) Non-chained AII - indicate that a call is being repeated.
+
+TODO:
+Validate and rewrite the parsing algorithm in rust
+Implement overhead analysis
+Allow combining data from multiple tracing runs.
+
+For some reason function_export_name_changed and exported_function_changed_abi refuse
+to be converted to text, even though every other file I have tested (admittedly only a few)
+work fine.
+
+Add a format mode for easy cross-run comparison.

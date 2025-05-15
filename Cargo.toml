@@ -5,6 +5,7 @@ members = [
     "trustfall_testbin",
     "trustfall_filetests_macros",
     "trustfall_derive",
+    "trustfall_ptrace",
     "trustfall_stubgen",
     "trustfall_wasm",
     "pytrustfall",
@@ -46,3 +47,13 @@ walkdir = "2.3.1"
 [profile.release]
 lto = true
 codegen-units = 1
+
+[profile.profiling]
+inherits = "release"
+lto = false
+codegen-units = 256
+debug = true
+
+[patch.crates-io]
+trustfall_core = { path = "./trustfall_core", version = "0.8.1" }
+trustfall-rustdoc-adapter = { path = "../trustfall-rustdoc-adapter", version = "54.1.0" }

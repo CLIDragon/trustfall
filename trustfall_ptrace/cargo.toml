@@ -1,6 +1,6 @@
 [package]
 publish = false
-name = "trustfall_testbin"
+name = "trustfall_ptrace"
 version = "0.1.0"
 rust-version.workspace = true
 edition.workspace = true
@@ -16,7 +16,12 @@ maplit = { workspace = true }
 ron = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 trustfall_core = { path = "../trustfall_core", features = ["__private"] }
-trustfall-rustdoc-adapter = { version = "45.2.0" }
+trustfall-rustdoc-adapter = { path = "../../trustfall-rustdoc-adapter", version = "54.1.0" }
 trustfall_rustdoc = { version = "0.30.1" }
 serde_json = "1.0"
-percent-encoding = "=2.1.0"
+
+flate2 = { version = "1.0"}
+postcard = { version = "1.1.1", features = ["alloc"]}
+bitcode = { version = "0.6.6" }
+clap = { version = "4.5.40", features = ["derive"] }
+

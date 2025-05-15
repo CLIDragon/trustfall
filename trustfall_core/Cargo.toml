@@ -36,6 +36,8 @@ regex = { workspace = true }
 thiserror = { workspace = true }
 itertools = { workspace = true }
 
+bitcode = "0.6.6"
+
 [dev-dependencies]
 ron = { workspace = true }
 trustfall_filetests_macros = { path = "../trustfall_filetests_macros", version = "0.2.0" }

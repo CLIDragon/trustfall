@@ -16,7 +16,20 @@ use super::{
     VertexIterator,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct Opid(pub NonZeroUsize); // operation ID
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -74,7 +87,7 @@ pub enum TraceOpContent<Vertex> {
 }
 
 #[allow(clippy::enum_variant_names)] // the variant names match the functions they represent
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub enum FunctionCall {
     ResolveStartingVertices(Vid),             // vertex ID
     ResolveProperty(Vid, Arc<str>, Arc<str>), // vertex ID + type name + name of the property
@@ -117,7 +130,7 @@ where
     }
 }
 
-fn make_iter_with_end_action<T, I: Iterator<Item = T>, F: FnOnce()>(
+pub fn make_iter_with_end_action<T, I: Iterator<Item = T>, F: FnOnce()>(
     inner: I,
     on_end: F,
 ) -> OnIterEnd<T, I, F> {
@@ -142,7 +155,7 @@ where
     }
 }
 
-fn make_iter_with_pre_action<T, I: Iterator<Item = T>, F: Fn()>(
+pub fn make_iter_with_pre_action<T, I: Iterator<Item = T>, F: Fn()>(
     inner: I,
     pre_action: F,
 ) -> PreActionIter<T, I, F> {

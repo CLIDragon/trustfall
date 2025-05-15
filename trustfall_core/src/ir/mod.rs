@@ -30,7 +30,20 @@ pub(crate) fn get_typename_meta_field() -> &'static Arc<str> {
 
 /// Unique vertex ID identifying a specific vertex in a Trustfall query
 #[doc(alias("vertex", "node"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct Vid(pub(crate) NonZeroUsize);
 
 impl Vid {
@@ -41,7 +54,20 @@ impl Vid {
 
 /// Unique edge ID identifying a specific edge in a Trustfall query
 #[doc(alias = "edge")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct Eid(pub(crate) NonZeroUsize);
 
 impl Eid {

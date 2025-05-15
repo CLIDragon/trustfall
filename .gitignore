@@ -11,3 +11,6 @@
 **/__pycache__/
 **/trustfall.cpython-*.so
 **/.pytest_cache/
+
+scripts/outputs
+scripts/outputs*

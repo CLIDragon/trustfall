@@ -5,19 +5,22 @@
 use anyhow::Context as _;
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     env,
-    fmt::Debug,
+    fmt::{Debug, Write as _},
     fs,
+    num::NonZeroUsize,
     path::PathBuf,
     rc::Rc,
     str::FromStr,
     sync::Arc,
+    time::{Duration, Instant},
 };
+use trustfall_rustdoc_adapter::RustdocAdapter;
 
 use async_graphql_parser::{parse_query, parse_schema};
 use itertools::Itertools;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use trustfall_core::{
     filesystem_interpreter::{FilesystemInterpreter, FilesystemVertex},
@@ -25,10 +28,14 @@ use trustfall_core::{
     interpreter::{
         error::QueryArgumentsError,
         execution,
-        trace::{tap_results, AdapterTap, Trace},
+        ptrace::{
+            self, ptap_results, PAdapterTap, PTrace, PTraceOp, PTraceOpContent, PYieldValue,
+            VertexT,
+        },
+        trace::{tap_results, AdapterTap, Opid, Trace, TraceOpContent, YieldValue},
         Adapter,
     },
-    ir::{FieldValue, IndexedQuery},
+    ir::{FieldValue, IndexedQuery, TransparentValue},
     nullables_interpreter::NullablesAdapter,
     numbers_interpreter::{NumbersAdapter, NumbersVertex},
     schema::{error::InvalidSchemaError, Schema},
@@ -207,6 +214,7 @@ fn trace_with_adapter<'a, AdapterT>(
 }
 
 fn trace(path: &str) {
+    // :path: is an .ir.ron file.
     let input_data = fs::read_to_string(path).unwrap();
     let test_query_result: TestIRQueryResult = ron::from_str(&input_data).unwrap();
     let test_query = test_query_result.unwrap();
@@ -330,6 +338,8 @@ fn corpus_graphql(path: &str, schema_name: &str) {
 fn main() {
     let args: Vec<String> = env::args().collect();
     let mut reversed_args: Vec<_> = args.iter().map(|x| x.as_str()).rev().collect();
+
+    println!("Size of {}", size_of::<PTraceOp<NumbersVertex>>());
 
     reversed_args
         .pop()
