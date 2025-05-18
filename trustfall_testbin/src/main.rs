@@ -5,14 +5,16 @@
 use anyhow::Context as _;
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     env,
-    fmt::Debug,
+    fmt::{self, Debug},
     fs,
-    path::PathBuf,
+    num::NonZeroUsize,
+    path::{Display, PathBuf},
     rc::Rc,
     str::FromStr,
-    sync::Arc, time::Duration,
+    sync::Arc,
+    time::Duration,
 };
 
 use async_graphql_parser::{parse_query, parse_schema};
@@ -25,8 +27,8 @@ use trustfall_core::{
     interpreter::{
         error::QueryArgumentsError,
         execution,
-        ptrace::{ptap_results, PAdapterTap, PTrace},
-        trace::{tap_results, AdapterTap, Trace},
+        ptrace::{ptap_results, PAdapterTap, PTrace, PTraceOp},
+        trace::{tap_results, AdapterTap, Opid, Trace, TraceOpContent, YieldValue},
         Adapter,
     },
     ir::{FieldValue, IndexedQuery},
@@ -262,8 +264,7 @@ where
         test_query.arguments.iter().map(|(k, v)| (Arc::from(k.to_owned()), v.clone())).collect(),
     );
 
-    let tracer =
-        Rc::new(RefCell::new(PTrace::new(test_query.arguments)));
+    let tracer = Rc::new(RefCell::new(PTrace::new(test_query.arguments)));
     let mut adapter_tap = Arc::new(PAdapterTap::new(adapter, tracer));
 
     let start = std::time::Instant::now();
@@ -277,7 +278,8 @@ where
             ptap_results(adapter_tap.clone(), results_iter).collect_vec();
 
             let trace = Arc::make_mut(&mut adapter_tap).clone().finish();
-            let data = POutputTrace { schema_name: test_query.schema_name, time: start.elapsed(), trace };
+            let data =
+                POutputTrace { schema_name: test_query.schema_name, time: start.elapsed(), trace };
 
             println!("{}", serialize_to_ron(&data));
         }
@@ -314,6 +316,119 @@ fn perf_trace(path: &str) {
         }
         _ => unreachable!("Unknown schema name: {}", test_query.schema_name),
     };
+}
+
+#[derive(Clone)]
+struct Operation<Vertex> {
+    opid: Opid,
+    op: PTraceOp<Vertex>,
+    children: Vec<Opid>,
+}
+
+// fn print_tree<Vertex: Debug>(op: &Operation<Vertex>, operations: &HashMap<Opid, Operation<Vertex>>, depth: usize) {
+//     let ind = "-".repeat(depth);
+//     println!("{ind} {:?} {:?}", op.opid, op.op.time);
+
+//     for child in &op.children {
+//         print_tree(operations.get(&child).unwrap(), operations, depth + 1);
+//     }
+// }
+
+fn format_operation<Vertex: Debug>(op: &TraceOpContent<Vertex>) -> String {
+    match op {
+        TraceOpContent::Call(x) => format!("Call({:?})", x),
+        TraceOpContent::AdvanceInputIterator => format!("AdvanceInputIterator"),
+        TraceOpContent::YieldInto(data_context) => {
+            let x = data_context;
+            format!("YieldInto")
+        }
+        TraceOpContent::YieldFrom(val) => {
+            let x = match val {
+                YieldValue::ResolveStartingVertices(_) => format!("ResolveStartingVertices"),
+                YieldValue::ResolveProperty(_, _) => format!("ResolveProperty"),
+                YieldValue::ResolveNeighborsOuter(_) => format!("ResolveNeighborsOuter"),
+                YieldValue::ResolveNeighborsInner(_, _) => format!("ResolveNeighborsInner"),
+                YieldValue::ResolveCoercion(_, _) => format!("ResolveCoercion"),
+            };
+            format!("YieldFrom({})", x)
+        }
+        TraceOpContent::InputIteratorExhausted => format!("InputIteratorExhausted"),
+        TraceOpContent::OutputIteratorExhausted => format!("OutputIteratorExhausted"),
+        TraceOpContent::ProduceQueryResult(_) => format!("ProduceQueryResult"),
+    }
+}
+
+fn perf_visualise(path: &str) {
+    // :path: is an .ptrace.ron file.
+    let input_data = fs::read_to_string(path).unwrap();
+    // TODO: Make this generic over the schema.
+    let trace_data: POutputTrace<NumbersVertex> = ron::from_str(&input_data).unwrap();
+    println!("time: {:?}", trace_data.time);
+
+    let trace_ops = trace_data.trace.ops;
+    let mut roots = Vec::new();
+    let mut operations: HashMap<Opid, Operation<NumbersVertex>> = HashMap::new();
+    for (opid, op) in trace_ops {
+        match op.parent_opid {
+            Some(id) => operations.get_mut(&id).unwrap().children.push(opid),
+            None => roots.push(opid),
+        }
+        let operation = Operation { opid, op, children: Vec::new() };
+        operations.insert(opid, operation);
+    }
+
+    // let mut aggregate_time: Duration = Duration::from_secs(0);
+    // for (opid, op) in &operations {
+    //     if matches!(op.op.content, TraceOpContent::YieldInto(_)) {
+    //         let next_operation =
+    //             operations.get(&Opid(NonZeroUsize::new(opid.0.get() + 1).unwrap())).unwrap();
+    //         assert!(matches!(next_operation.op.content, TraceOpContent::YieldFrom(_)));
+    //         aggregate_time += next_operation.op.time.unwrap() - op.op.time.unwrap();
+    //     }
+    // }
+    let aggregate_time: Duration = operations
+        .values()
+        .filter(|op| matches!(op.op.content, TraceOpContent::ProduceQueryResult(_)))
+        .filter_map(|op| op.op.time)
+        .sum();
+    println!("time (agg): {:?}", aggregate_time);
+
+    let mut queue: Vec<(Opid, usize)> = roots.clone().into_iter().map(|x| (x, 0)).rev().collect();
+    while let Some((opid, depth)) = queue.pop() {
+        let mut ind: String = String::new();
+        if depth != 0 {
+            ind = "-".repeat(depth) + " ";
+        }
+        let op = operations.get(&opid).unwrap();
+        println!("{ind}{:?} {:?} {}", op.opid, op.op.time, format_operation(&op.op.content));
+        for child in op.children.iter().rev() {
+            queue.push((child.clone(), depth + 1));
+        }
+    }
+
+    println!("");
+
+    for i in 1.. {
+        let opid = Opid(NonZeroUsize::new(i).unwrap());
+        if let Some(op) = operations.get(&opid) {
+            println!(
+                "{:?} {:?} {:?} {}",
+                op.opid,
+                op.op.parent_opid,
+                op.op.time,
+                format_operation(&op.op.content)
+            );
+            if matches!(op.op.content, TraceOpContent::ProduceQueryResult(_)) {
+                println!("");
+            }
+        } else {
+            break;
+        }
+    }
+
+    // for opid in roots {
+    //     print_tree(operations.get(&opid).unwrap(), &operations, 0);
+    // }
 }
 
 fn reserialize(path: &str) {
@@ -444,6 +559,13 @@ fn main() {
             Some(path) => {
                 assert!(reversed_args.is_empty());
                 perf_trace(path)
+            }
+        },
+        Some("perf_visualise") => match reversed_args.pop() {
+            None => panic!("No filename provided"),
+            Some(path) => {
+                assert!(reversed_args.is_empty());
+                perf_visualise(path)
             }
         },
         Some("schema_error") => match reversed_args.pop() {
