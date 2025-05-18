@@ -171,13 +171,16 @@ fn outputs(path: &str) {
     };
 }
 
+trait VertexT: Clone + Debug + PartialEq + Eq + Serialize + DeserializeOwned {}
+impl<T: Clone + Debug + PartialEq + Eq + Serialize + DeserializeOwned> VertexT for T {}
+
 fn trace_with_adapter<'a, AdapterT>(
     adapter: AdapterT,
     test_query: TestIRQuery,
     expected_results_func: impl FnOnce() -> Vec<BTreeMap<Arc<str>, FieldValue>>,
 ) where
     AdapterT: Adapter<'a> + Clone + 'a,
-    AdapterT::Vertex: Clone + Debug + PartialEq + Eq + Serialize + DeserializeOwned,
+    AdapterT::Vertex: VertexT,
 {
     let query = Arc::new(test_query.ir_query.clone().try_into().unwrap());
     let arguments: Arc<BTreeMap<_, _>> = Arc::new(
@@ -289,6 +292,7 @@ where
     }
 }
 
+
 fn perf_trace(path: &str) {
     // :path: is an .ir.ron file.
     let input_data = fs::read_to_string(path).unwrap();
@@ -316,6 +320,50 @@ fn perf_trace(path: &str) {
         }
         _ => unreachable!("Unknown schema name: {}", test_query.schema_name),
     };
+}
+
+
+fn cargo_ptrace() {
+    let current_path = r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\serde.json"#;
+    let baseline_path = r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\serde.json"#;
+
+    let current_rustdoc: trustfall_rustdoc_adapter::Crate = serde_json::from_str(&std::fs::read_to_string(current_path).unwrap()).unwrap();
+    let baseline_rustdoc: trustfall_rustdoc_adapter::Crate = serde_json::from_str(&std::fs::read_to_string(baseline_path).unwrap()).unwrap();
+    
+    let current_storage = trustfall_rustdoc_adapter::PackageStorage::from_rustdoc(current_rustdoc);
+    let baseline_storage = trustfall_rustdoc_adapter::PackageStorage::from_rustdoc(baseline_rustdoc);
+    
+    let current_crate = trustfall_rustdoc_adapter::PackageIndex::from_storage(&current_storage);
+    let baseline_crate = trustfall_rustdoc_adapter::PackageIndex::from_storage(&baseline_storage);
+    
+    let adapter = trustfall_rustdoc_adapter::RustdocAdapter::new(&current_crate, Some(&baseline_crate));
+    
+    let query_path = r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\enum_missing.ron"#;
+    let query: TestGraphQLQuery = ron::from_str(&std::fs::read_to_string(query_path).unwrap()).unwrap();
+    let parsed_query = trustfall_core::frontend::parse(&trustfall_rustdoc_adapter::RustdocAdapter::schema(), &query.query).unwrap();
+    let vars: Arc<BTreeMap<Arc<str>, FieldValue>> = Arc::new(query.arguments.clone().into_iter().map(|(k, v)| (k.into(), v.into())).collect());
+    // let vars = &query.arguments.clone();
+    let result: TestParsedGraphQLQueryResult = parse_query(query.query)
+        .map_err(ParseError::from)
+        .and_then(|doc| parse_document(&doc))
+        .map(move |q| TestParsedGraphQLQuery {
+            schema_name: "Dummy".to_string(),
+            query: q,
+            arguments: query.arguments.clone(),
+        });
+
+    let test_query = trustfall_core::frontend::make_ir_for_query(&trustfall_rustdoc_adapter::RustdocAdapter::schema(), &result.unwrap().query);
+    let result: TestIRQueryResult = test_query.map(move |ir_query| TestIRQuery {
+        schema_name: "Dummy".to_string(),
+        ir_query,
+        arguments: query.arguments.clone(),
+    });
+    let start_instant = std::time::Instant::now();
+    // TODO: Collect results.
+    // let results = trustfall_core::interpreter::execution::interpret_ir(Arc::new(&adapter), parsed_query, vars);
+    perf_trace_with_adapter(&adapter, result.unwrap());
+    let time_to_decide = start_instant.elapsed();
+    println!("time: {:?}", time_to_decide);
 }
 
 #[derive(Clone)]
@@ -358,6 +406,7 @@ fn format_operation<Vertex: Debug>(op: &TraceOpContent<Vertex>) -> String {
     }
 }
 
+
 fn perf_visualise(path: &str) {
     // :path: is an .ptrace.ron file.
     let input_data = fs::read_to_string(path).unwrap();
@@ -393,20 +442,20 @@ fn perf_visualise(path: &str) {
         .sum();
     println!("time (agg): {:?}", aggregate_time);
 
-    let mut queue: Vec<(Opid, usize)> = roots.clone().into_iter().map(|x| (x, 0)).rev().collect();
-    while let Some((opid, depth)) = queue.pop() {
-        let mut ind: String = String::new();
-        if depth != 0 {
-            ind = "-".repeat(depth) + " ";
-        }
-        let op = operations.get(&opid).unwrap();
-        println!("{ind}{:?} {:?} {}", op.opid, op.op.time, format_operation(&op.op.content));
-        for child in op.children.iter().rev() {
-            queue.push((child.clone(), depth + 1));
-        }
-    }
+    // let mut queue: Vec<(Opid, usize)> = roots.clone().into_iter().map(|x| (x, 0)).rev().collect();
+    // while let Some((opid, depth)) = queue.pop() {
+    //     let mut ind: String = String::new();
+    //     if depth != 0 {
+    //         ind = "-".repeat(depth) + " ";
+    //     }
+    //     let op = operations.get(&opid).unwrap();
+    //     println!("{ind}{:?} {:?} {}", op.opid, op.op.time, format_operation(&op.op.content));
+    //     for child in op.children.iter().rev() {
+    //         queue.push((child.clone(), depth + 1));
+    //     }
+    // }
 
-    println!("");
+    // println!("");
 
     for i in 1.. {
         let opid = Opid(NonZeroUsize::new(i).unwrap());
@@ -598,6 +647,15 @@ fn main() {
 
                 assert!(reversed_args.is_empty());
                 check_fuzzed(path, schema_name)
+            }
+        },
+        Some("cargo_ptrace") => match reversed_args.pop() {
+            None => panic!("No filename provided"),
+            Some(path) => {
+                // let schema_name = reversed_args.pop().expect("schema name");
+
+                // assert!(reversed_args.is_empty());
+                cargo_ptrace()
             }
         },
         Some(cmd) => panic!("Unrecognized command given: {cmd}"),

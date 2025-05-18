@@ -16,3 +16,6 @@ maplit = { workspace = true }
 ron = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 trustfall_core = { path = "../trustfall_core", features = ["__private"] }
+trustfall-rustdoc-adapter = { version = "45.0.1" }
+trustfall_rustdoc = { version = "0.23.1" }
+serde_json = "1.0"

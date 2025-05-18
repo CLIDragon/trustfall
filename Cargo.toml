@@ -46,3 +46,6 @@ walkdir = "2.3.1"
 [profile.release]
 lto = true
 codegen-units = 1
+
+[patch.crates-io]
+trustfall_core = { path = "./trustfall_core", version = "0.8.1" }
