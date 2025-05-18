@@ -6,8 +6,8 @@ use std::{
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::{
-    interpreter::{Adapter, DataContext},
-    ir::{EdgeParameters, Eid, FieldValue, IRQuery, Vid},
+    interpreter::{Adapter},
+    ir::{EdgeParameters, FieldValue},
     util::BTreeMapTryInsertExt,
 };
 
@@ -18,7 +18,7 @@ use super::{
 };
 use std::time::Instant;
 
-use super::trace::{FunctionCall, Opid, TraceOp, TraceOpContent, YieldValue};
+use super::trace::{FunctionCall, Opid, TraceOpContent, YieldValue};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "Vertex: Debug + Clone + Serialize + DeserializeOwned")]
@@ -106,7 +106,6 @@ where
     AdapterT: Adapter<'vertex> + 'vertex,
     AdapterT::Vertex: Clone + Debug + PartialEq + Eq + Serialize + DeserializeOwned + 'vertex,
 {
-
     Box::new(make_iter_with_perf_span(result_iter, move |result, d| {
         adapter_tap.tracer.borrow_mut().record(
             TraceOpContent::ProduceQueryResult(result.clone()),

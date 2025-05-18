@@ -5,12 +5,12 @@
 use anyhow::Context as _;
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, HashMap},
     env,
-    fmt::{self, Debug},
+    fmt::Debug,
     fs,
     num::NonZeroUsize,
-    path::{Display, PathBuf},
+    path::PathBuf,
     rc::Rc,
     str::FromStr,
     sync::Arc,
@@ -27,7 +27,7 @@ use trustfall_core::{
     interpreter::{
         error::QueryArgumentsError,
         execution,
-        ptrace::{ptap_results, PAdapterTap, PTrace, PTraceOp},
+        ptrace::{self, ptap_results, PAdapterTap, PTrace, PTraceOp},
         trace::{tap_results, AdapterTap, Opid, Trace, TraceOpContent, YieldValue},
         Adapter,
     },
@@ -283,15 +283,21 @@ where
             let trace = Arc::make_mut(&mut adapter_tap).clone().finish();
             let data =
                 POutputTrace { schema_name: test_query.schema_name, time: start.elapsed(), trace };
+            println!("Operations: {:?}", &data.trace.ops.len());
+            for (opid, op) in &data.trace.ops {
+                println!("{:?}", opid);
+            }
 
-            println!("{}", serialize_to_ron(&data));
+            // let mut buffer = String::with_capacity(100_000_000);
+            // write!(&mut buffer, "{:?}", &data.trace.ops).unwrap();
+            // // std::fs::write(r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\enum_missing.ptrace.txt"#, text).unwrap();
+            // println!("{}", ron::to_string(&data).unwrap());
         }
         Err(e) => {
             println!("{}", serialize_to_ron(&e));
         }
     }
 }
-
 
 fn perf_trace(path: &str) {
     // :path: is an .ir.ron file.
@@ -322,26 +328,36 @@ fn perf_trace(path: &str) {
     };
 }
 
-
 fn cargo_ptrace() {
     let current_path = r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\serde.json"#;
     let baseline_path = r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\serde.json"#;
 
-    let current_rustdoc: trustfall_rustdoc_adapter::Crate = serde_json::from_str(&std::fs::read_to_string(current_path).unwrap()).unwrap();
-    let baseline_rustdoc: trustfall_rustdoc_adapter::Crate = serde_json::from_str(&std::fs::read_to_string(baseline_path).unwrap()).unwrap();
-    
+    let current_rustdoc: trustfall_rustdoc_adapter::Crate =
+        serde_json::from_str(&std::fs::read_to_string(current_path).unwrap()).unwrap();
+    let baseline_rustdoc: trustfall_rustdoc_adapter::Crate =
+        serde_json::from_str(&std::fs::read_to_string(baseline_path).unwrap()).unwrap();
+
     let current_storage = trustfall_rustdoc_adapter::PackageStorage::from_rustdoc(current_rustdoc);
-    let baseline_storage = trustfall_rustdoc_adapter::PackageStorage::from_rustdoc(baseline_rustdoc);
-    
+    let baseline_storage =
+        trustfall_rustdoc_adapter::PackageStorage::from_rustdoc(baseline_rustdoc);
+
     let current_crate = trustfall_rustdoc_adapter::PackageIndex::from_storage(&current_storage);
     let baseline_crate = trustfall_rustdoc_adapter::PackageIndex::from_storage(&baseline_storage);
-    
-    let adapter = trustfall_rustdoc_adapter::RustdocAdapter::new(&current_crate, Some(&baseline_crate));
-    
+
+    let adapter =
+        trustfall_rustdoc_adapter::RustdocAdapter::new(&current_crate, Some(&baseline_crate));
+
     let query_path = r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\enum_missing.ron"#;
-    let query: TestGraphQLQuery = ron::from_str(&std::fs::read_to_string(query_path).unwrap()).unwrap();
-    let parsed_query = trustfall_core::frontend::parse(&trustfall_rustdoc_adapter::RustdocAdapter::schema(), &query.query).unwrap();
-    let vars: Arc<BTreeMap<Arc<str>, FieldValue>> = Arc::new(query.arguments.clone().into_iter().map(|(k, v)| (k.into(), v.into())).collect());
+    let query: TestGraphQLQuery =
+        ron::from_str(&std::fs::read_to_string(query_path).unwrap()).unwrap();
+    let parsed_query = trustfall_core::frontend::parse(
+        &trustfall_rustdoc_adapter::RustdocAdapter::schema(),
+        &query.query,
+    )
+    .unwrap();
+    let vars: Arc<BTreeMap<Arc<str>, FieldValue>> =
+        Arc::new(query.arguments.clone().into_iter().map(|(k, v)| (k.into(), v.into())).collect());
+    let arguments = query.arguments.clone();
     // let vars = &query.arguments.clone();
     let result: TestParsedGraphQLQueryResult = parse_query(query.query)
         .map_err(ParseError::from)
@@ -349,10 +365,13 @@ fn cargo_ptrace() {
         .map(move |q| TestParsedGraphQLQuery {
             schema_name: "Dummy".to_string(),
             query: q,
-            arguments: query.arguments.clone(),
+            arguments,
         });
 
-    let test_query = trustfall_core::frontend::make_ir_for_query(&trustfall_rustdoc_adapter::RustdocAdapter::schema(), &result.unwrap().query);
+    let test_query = trustfall_core::frontend::make_ir_for_query(
+        &trustfall_rustdoc_adapter::RustdocAdapter::schema(),
+        &result.unwrap().query,
+    );
     let result: TestIRQueryResult = test_query.map(move |ir_query| TestIRQuery {
         schema_name: "Dummy".to_string(),
         ir_query,
@@ -405,7 +424,6 @@ fn format_operation<Vertex: Debug>(op: &TraceOpContent<Vertex>) -> String {
         TraceOpContent::ProduceQueryResult(_) => format!("ProduceQueryResult"),
     }
 }
-
 
 fn perf_visualise(path: &str) {
     // :path: is an .ptrace.ron file.
