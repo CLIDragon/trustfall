@@ -7,7 +7,7 @@ use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet, HashMap},
     env,
-    fmt::Debug,
+    fmt::{Debug, Write as _},
     fs,
     num::NonZeroUsize,
     path::PathBuf,
@@ -27,7 +27,7 @@ use trustfall_core::{
     interpreter::{
         error::QueryArgumentsError,
         execution,
-        ptrace::{self, ptap_results, PAdapterTap, PTrace, PTraceOp},
+        ptrace::{self, ptap_results, PAdapterTap, PTrace, PTraceOp, VertexT},
         trace::{tap_results, AdapterTap, Opid, Trace, TraceOpContent, YieldValue},
         Adapter,
     },
@@ -171,8 +171,6 @@ fn outputs(path: &str) {
     };
 }
 
-trait VertexT: Clone + Debug + PartialEq + Eq + Serialize + DeserializeOwned {}
-impl<T: Clone + Debug + PartialEq + Eq + Serialize + DeserializeOwned> VertexT for T {}
 
 fn trace_with_adapter<'a, AdapterT>(
     adapter: AdapterT,
@@ -180,7 +178,7 @@ fn trace_with_adapter<'a, AdapterT>(
     expected_results_func: impl FnOnce() -> Vec<BTreeMap<Arc<str>, FieldValue>>,
 ) where
     AdapterT: Adapter<'a> + Clone + 'a,
-    AdapterT::Vertex: VertexT,
+    AdapterT::Vertex: Clone + Debug + PartialEq + Eq + Serialize + DeserializeOwned,
 {
     let query = Arc::new(test_query.ir_query.clone().try_into().unwrap());
     let arguments: Arc<BTreeMap<_, _>> = Arc::new(
@@ -260,7 +258,7 @@ pub struct POutputTrace<Vertex> {
 fn perf_trace_with_adapter<'a, AdapterT>(adapter: AdapterT, test_query: TestIRQuery)
 where
     AdapterT: Adapter<'a> + Clone + 'a,
-    AdapterT::Vertex: Clone + Debug + PartialEq + Eq + Serialize + DeserializeOwned,
+    AdapterT::Vertex: VertexT,
 {
     let query = Arc::new(test_query.ir_query.clone().try_into().unwrap());
     let arguments: Arc<BTreeMap<_, _>> = Arc::new(
@@ -284,13 +282,16 @@ where
             let data =
                 POutputTrace { schema_name: test_query.schema_name, time: start.elapsed(), trace };
             println!("Operations: {:?}", &data.trace.ops.len());
+            println!("Time: {:?}", &data.time);
+            let mut buffer = String::with_capacity(10_000_000);
             for (opid, op) in &data.trace.ops {
-                println!("{:?}", opid);
+                write!(&mut buffer, "{:?} {:?} {:?} {}\n", opid, op.parent_opid, op.time, format_operation(&op.content)).unwrap();
             }
+            println!("Buffer len: {}", buffer.len());
 
             // let mut buffer = String::with_capacity(100_000_000);
             // write!(&mut buffer, "{:?}", &data.trace.ops).unwrap();
-            // // std::fs::write(r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\enum_missing.ptrace.txt"#, text).unwrap();
+            std::fs::write(r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\enum_missing.ptrace.txt"#, buffer).unwrap();
             // println!("{}", ron::to_string(&data).unwrap());
         }
         Err(e) => {
@@ -382,7 +383,7 @@ fn cargo_ptrace() {
     // let results = trustfall_core::interpreter::execution::interpret_ir(Arc::new(&adapter), parsed_query, vars);
     perf_trace_with_adapter(&adapter, result.unwrap());
     let time_to_decide = start_instant.elapsed();
-    println!("time: {:?}", time_to_decide);
+    println!("total time: {:?}", time_to_decide);
 }
 
 #[derive(Clone)]
@@ -404,7 +405,7 @@ struct Operation<Vertex> {
 fn format_operation<Vertex: Debug>(op: &TraceOpContent<Vertex>) -> String {
     match op {
         TraceOpContent::Call(x) => format!("Call({:?})", x),
-        TraceOpContent::AdvanceInputIterator => format!("AdvanceInputIterator"),
+        TraceOpContent::AdvanceInputIterator(x) => format!("AdvanceInputIterator(owner: {:?})", x),
         TraceOpContent::YieldInto(data_context) => {
             let x = data_context;
             format!("YieldInto")

@@ -110,7 +110,7 @@ where
                 input_op,
             );
 
-            if let TraceOpContent::AdvanceInputIterator = &input_op.content {
+            if let TraceOpContent::AdvanceInputIterator(_) = &input_op.content {
                 let input_data = self.contexts.next();
 
                 let (_, input_op) = advance_ref_iter(self.inner.as_ref())
@@ -197,7 +197,7 @@ where
                 input_op,
             );
 
-            if let TraceOpContent::AdvanceInputIterator = &input_op.content {
+            if let TraceOpContent::AdvanceInputIterator(_) = &input_op.content {
                 let input_data = self.contexts.next();
 
                 let (_, input_op) = advance_ref_iter(self.inner.as_ref())
@@ -284,7 +284,7 @@ where
                 input_op,
             );
 
-            if let TraceOpContent::AdvanceInputIterator = &input_op.content {
+            if let TraceOpContent::AdvanceInputIterator(_) = &input_op.content {
                 let input_data = self.contexts.next();
 
                 let (_, input_op) = advance_ref_iter(self.inner.as_ref())

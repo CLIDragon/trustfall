@@ -12,13 +12,18 @@ use crate::{
 };
 
 use super::{
-    trace::{make_iter_with_end_action, make_iter_with_pre_action},
+    trace::{make_iter_with_end_action, make_iter_with_pre_action, CallType},
     AsVertex, ContextIterator, ContextOutcomeIterator, ResolveEdgeInfo, ResolveInfo, VertexInfo,
     VertexIterator,
 };
 use std::time::Instant;
 
 use super::trace::{FunctionCall, Opid, TraceOpContent, YieldValue};
+
+
+pub trait VertexT: Clone + Debug {}
+impl<T: Clone + Debug> VertexT for T {}
+
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "Vertex: Debug + Clone + Serialize + DeserializeOwned")]
@@ -31,7 +36,7 @@ pub struct PTrace<Vertex> {
 
 impl<Vertex> PTrace<Vertex>
 where
-    Vertex: Clone + Debug + PartialEq + Eq + Serialize + DeserializeOwned,
+    Vertex: VertexT,
 {
     #[allow(dead_code)]
     pub fn new(arguments: BTreeMap<String, FieldValue>) -> Self {
@@ -73,7 +78,7 @@ pub struct PTraceOp<Vertex> {
 pub struct PAdapterTap<'vertex, AdapterT>
 where
     AdapterT: Adapter<'vertex>,
-    AdapterT::Vertex: Clone + Debug + PartialEq + Eq + Serialize + DeserializeOwned + 'vertex,
+    AdapterT::Vertex: VertexT + 'vertex,
 {
     tracer: Rc<RefCell<PTrace<AdapterT::Vertex>>>,
     inner: AdapterT,
@@ -83,7 +88,7 @@ where
 impl<'vertex, AdapterT> PAdapterTap<'vertex, AdapterT>
 where
     AdapterT: Adapter<'vertex>,
-    AdapterT::Vertex: Clone + Debug + PartialEq + Eq + Serialize + DeserializeOwned + 'vertex,
+    AdapterT::Vertex: VertexT + 'vertex,
 {
     pub fn new(adapter: AdapterT, tracer: Rc<RefCell<PTrace<AdapterT::Vertex>>>) -> Self {
         Self { tracer, inner: adapter, _phantom: PhantomData }
@@ -104,7 +109,7 @@ pub fn ptap_results<'vertex, AdapterT>(
 ) -> impl Iterator<Item = BTreeMap<Arc<str>, FieldValue>> + 'vertex
 where
     AdapterT: Adapter<'vertex> + 'vertex,
-    AdapterT::Vertex: Clone + Debug + PartialEq + Eq + Serialize + DeserializeOwned + 'vertex,
+    AdapterT::Vertex: VertexT + 'vertex,
 {
     Box::new(make_iter_with_perf_span(result_iter, move |result, d| {
         adapter_tap.tracer.borrow_mut().record(
@@ -154,7 +159,7 @@ where
 impl<'vertex, AdapterT> Adapter<'vertex> for PAdapterTap<'vertex, AdapterT>
 where
     AdapterT: Adapter<'vertex> + 'vertex,
-    AdapterT::Vertex: Clone + Debug + PartialEq + Eq + Serialize + DeserializeOwned + 'vertex,
+    AdapterT::Vertex: VertexT + 'vertex,
 {
     type Vertex = AdapterT::Vertex;
 
@@ -229,7 +234,7 @@ where
         let wrapped_contexts = Box::new(make_iter_with_end_action(
             make_iter_with_pre_action(x, move || {
                 tracer_ref_1.borrow_mut().record(
-                    TraceOpContent::AdvanceInputIterator,
+                    TraceOpContent::AdvanceInputIterator(CallType::ResolveProperty),
                     Some(call_opid),
                     None,
                 );
@@ -306,7 +311,7 @@ where
         let wrapped_contexts = Box::new(make_iter_with_end_action(
             make_iter_with_pre_action(x, move || {
                 tracer_ref_1.borrow_mut().record(
-                    TraceOpContent::AdvanceInputIterator,
+                    TraceOpContent::AdvanceInputIterator(CallType::ResolveNeighbors),
                     Some(call_opid),
                     None,
                 );
@@ -416,7 +421,7 @@ where
         let wrapped_contexts = Box::new(make_iter_with_end_action(
             make_iter_with_pre_action(x, move || {
                 tracer_ref_1.borrow_mut().record(
-                    TraceOpContent::AdvanceInputIterator,
+                    TraceOpContent::AdvanceInputIterator(CallType::ResolveCoercion),
                     Some(call_opid),
                     None,
                 );

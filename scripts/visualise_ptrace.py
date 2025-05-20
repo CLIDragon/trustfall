@@ -40,9 +40,15 @@ class Node:
     def add_child(self, node: Node):
         self._children.append(node)
 
+    def __str__(self) -> str:
+        return f"({self.id} [{', '.join(x.id for x in self._children)}])"
+
+    def __repr__(self) -> str:
+        return str(self)
+
 class Tree:
     def __init__(self):
-        self._root_node = None
+        self._root_node: Node | None = None
         self._nodes = {}
 
     def add_node(self, node: Node, parent: Node | None):
@@ -60,15 +66,20 @@ class Tree:
             self._nodes[parent.id].add_child(node)
             self._nodes[node.id] = node
 
-    def __getitem__(self, node_id):
-        return self._nodes[node_id]
+    def __getitem__(self, node: Node):
+        return self._nodes[node.id]
 
-    def add_stack(self, operations, parent: Node | None):
+    def add_stack(self, operations, parent: Node | None) -> Node:
+        assert len(operations) >= 1
+
         if parent is None:
             parent = Node(operations[-1][0])
-            self._root_node = parent.id
+            self._root_node = parent
             self._nodes[parent.id] = parent
             operations = operations[:-1]
+            top = parent
+        else:
+            top = None
 
         for op in reversed(operations):
             opid = op[0]
@@ -76,6 +87,36 @@ class Tree:
             self._nodes[node.id] = node
             parent.add_child(node)
             parent = node
+
+            if top is None:
+                top = node
+
+        # Returns the highest child on the stack, or the parent
+        # if parent is None.
+        return top
+
+    def children(self, node: Node) -> list[Node]:
+        return self._nodes[node.id]._children
+
+    def parents(self, needle: Node) -> list[Node]:
+        parents = []
+        for (nid, node) in self._nodes.items():
+            if needle in node._children:
+                parents.append(node)
+        return parents
+
+    def get_node(self, node_id):
+        return self._nodes[node_id]
+
+    def __str__(self) -> str:
+        ret = []
+        queue = [self._root_node]
+        while queue:
+            node = queue.pop()
+            ret.append(node)
+            queue.extend(node._children)
+
+        return str(ret)
 
 
 class TraceReplay:
@@ -98,6 +139,8 @@ class TraceReplay:
 
     @property
     def active_function(self) -> Node:
+        if self._cursor is None:
+            raise KeyError("None is not a valid Node.")
         return self._callstack[self._cursor]
 
     def progress(self, op, debug=False):
@@ -123,25 +166,32 @@ class TraceReplay:
             else:
                 self._calling = True
                 self._call_list = [ op ]
-        else:
+
+            self._calls.append(opid)
+        elif self._calling:
             # The cursor points to the parent before the stack started.
-            self._callstack.add_stack( self._call_list, self._cursor )
-            self._cursor = self._call_list[-1][0]
+            self._cursor = self._callstack.add_stack( self._call_list, self._cursor )
+
+            if self._last_yield is not None:
+                self._callstack.add_stack( [(self._last_yield,)], self._callstack.get_node(self._call_list[0][0]) )
+
             self._calling = False
             self._call_list = []
 
-        if op_type.startswith("AdvanceInputIterator"):
+        if op_type.startswith("Call"):
+            pass
+        elif op_type.startswith("AdvanceInputIterator"):
             if parent not in self._calls:
                 print("AdvanceInputIterator called with non-function parent.\n\t Operation: ", op)
-            elif parent != self.active_function and parent != self._last_yield:
+            elif parent != self.active_function.id and parent != self._last_yield:
                 print("AdvanceInputIterator called with incorrect function stack.", end="")
                 self._print_debug_info(op)
 
             # If the last yield provided invalid results (such as not being of the right type)
             # the function may be called again.
-            if parent != self.active_function:
+            if parent != self.active_function.id:
                 self.descend()
-                if self.active_function != self._last_yield:
+                if self.active_function.id != self._last_yield:
                     print("Active function does not match the last yielded", end="")
                     self._print_debug_info(op)
             else:        
@@ -152,19 +202,11 @@ class TraceReplay:
             if op_type == "YieldFrom(ResolveStartingVertices)":
                 self.ascend()
             elif op_type == "YieldFrom(ResolveNeighborsOuter)":
+                self._last_yield = opid
                 # ResolveNeighborsOuter creates its own iterator and thus
-                # deserves to go on the stack. It should go one behind so
-                # that the yield from ResolveNeighborsInner moves to the
-                # parent properly.
-                # self._callstack.insert(self._index, opid)
-
-                # It goes on its own stack in order to avoid numerical
-                # conflicts.
-                # self._neighbors_stack.append(opid)
-
-                self._tag += 1
-                self._callstack.insert(self._cursor + 1, (opid, self._tag))
-                self.ascend()
+                # deserves to go on the stack.
+                self._neighbors_stack.append(opid)
+                self._cursor = self._callstack.add_stack( [op], self._cursor )
             elif op_type == "YieldFrom(ResolveNeighborsInner)":
                 if parent not in self._neighbors_stack:
                     print("Yielding from ResolveNeighborsInner without a valid parent.\n\tOperation:", op)
@@ -179,11 +221,17 @@ class TraceReplay:
                 # this is changing the active function. Otherwise, it's simply doing the equivalent
                 # of a AdvanceInputIterator followed by a YieldFrom without the AdvanceInputIterator
                 # (YieldFrom(ResolveNeighborsOuter) has an implicit Call under this model).
-                # prev_parent = self._ops[self._last_op[0]][0]
-                # if "ResolveNeighbors" in self._ops[prev_parent][2]:
-                
+
                 # Special-case handling because of the way ResolveNeighborsOuter inserts itself.
-                self.ascend()
+                # We need to double step out.
+                prev_parent = self._ops[self._last_op[0]][0]
+                if "ResolveNeighbors" in self._ops[prev_parent][2]:
+                    self.ascend()
+                    self.ascend()
+                
+                # FIXME: We really shouldn't ignore the general case, but I 
+                # just can't see how to include it right now.
+                # self.ascend()
             else:
                 self.ascend()
         elif op_type.startswith("OutputIteratorExhausted"):
@@ -211,55 +259,35 @@ class TraceReplay:
             ind = "\n\t"
         else:
             ind = "\n"
-        print(f"{ind} Operation: {op}",f"{ind} Stack: {self._callstack}", f"{ind} Index: {self._cursor} ({self.active_function})", f"{ind} Last Yield: {self._last_yield}")
+        print(f"{ind} Operation: {op}",f"{ind} Stack: {self._callstack}", f"{ind} Index: {self._cursor}", f"{ind} Last Yield: {self._last_yield}")
 
     def ascend(self):
-        cur = self._callstack[self._cursor]
-        fut = self._callstack[self._cursor + 1]
-        # If the tags are the same then we're good to go.
-        # We can always move right to a greater tag.
-        if fut[1] >= cur[1]:
-            self._cursor += 1
-            return
-
-        # Otherwise look left for the first tag that's one less
-        # than this one. This is because when we embed a new stack
-        # its parent is the inverse of what it started next to.
-        for i in range(self._cursor - 1, -1, -1):
-            if self._callstack[i][1] == cur[1] - 1:
-                self._cursor = i
-                break
-        else:
-            print("Could not find a matching pair with a lower tag when incrementing.")
+        # Walk down the tree.
+        parents = self._callstack.parents(self._cursor)
+        if len(parents) != 1:
+            print("Invalid number of ancestors when walking up the tree.")
+            print("\t Children:", parents)
             print("\t Stack:", self._callstack)
-            print("\t Index:", self._cursor)
+            print("\t Cursor:", self._cursor)
+        else:
+            self._cursor = parents[0]
 
     def descend(self):
-        cur = self._callstack[self._cursor]
-        fut = self._callstack[self._cursor - 1]
-        # If the tags are the same then we're good to go.
-        # We can always move left to a smaller tag.
-        # FIXME: Should this only be one less?
-        if fut[1] <= cur[1]:
-            self._cursor -= 1
-            return
-
-        # Otherwise look left for the first tag that's one less
-        # than this one. This is because when we embed a new stack
-        # its parent is the inverse of what it started next to.
-        for i in range(self._cursor - 1, -1, -1):
-            if self._callstack[i][1] == cur[1] - 1:
-                self._cursor = i
-                break
-        else:
-            print("Could not find a matching pair with a lower tag when decrementing.")
+        # Walk down the tree.
+        children = self._callstack.children(self._cursor)
+        if len(children) != 1:
+            print("Invalid number of descendants when walking down the tree.")
+            print("\t Children:", children)
             print("\t Stack:", self._callstack)
+            print("\t Cursor:", self._cursor)
+        else:
+            self._cursor = children[0]
 
 
 player = TraceReplay()
 for i, op in enumerate(groups[0], 1):
     op = (op[0], op[1], op[2], " ".join(op[3:]))
     debug = False
-    if i in range(29, 46):
+    if i in range(1500, 1511):
         debug = True
     player.progress(op, debug)
