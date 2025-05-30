@@ -3,7 +3,6 @@
 #![forbid(elided_lifetimes_in_paths)]
 
 use anyhow::Context as _;
-use trustfall_rustdoc_adapter::RustdocAdapter;
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -15,8 +14,9 @@ use std::{
     rc::Rc,
     str::FromStr,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
+use trustfall_rustdoc_adapter::RustdocAdapter;
 
 use async_graphql_parser::{parse_query, parse_schema};
 use itertools::Itertools;
@@ -35,7 +35,7 @@ use trustfall_core::{
         trace::{tap_results, AdapterTap, Opid, Trace, TraceOpContent, YieldValue},
         Adapter,
     },
-    ir::{FieldValue, IndexedQuery},
+    ir::{FieldValue, IndexedQuery, TransparentValue},
     nullables_interpreter::NullablesAdapter,
     numbers_interpreter::{NumbersAdapter, NumbersVertex},
     schema::{error::InvalidSchemaError, Schema},
@@ -344,7 +344,107 @@ fn perf_trace(path: &str) {
     };
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum RequiredSemverUpdate {
+    #[serde(alias = "minor")]
+    Minor,
+    #[serde(alias = "major")]
+    Major,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum LintLevel {
+    /// If this lint occurs, do nothing.
+    #[serde(alias = "allow")]
+    Allow,
+    /// If this lint occurs, print a warning.
+    #[serde(alias = "warn")]
+    Warn,
+    /// If this lint occurs, raise an error.
+    #[serde(alias = "deny")]
+    Deny,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemverQuery {
+    pub id: String,
+
+    pub(crate) human_readable_name: String,
+
+    pub description: String,
+
+    pub required_update: RequiredSemverUpdate,
+
+    /// The default lint level for when this lint occurs.
+    pub lint_level: LintLevel,
+
+    #[serde(default)]
+    pub reference: Option<String>,
+
+    #[serde(default)]
+    pub reference_link: Option<String>,
+
+    pub(crate) query: String,
+
+    #[serde(default)]
+    pub(crate) arguments: BTreeMap<String, TransparentValue>,
+
+    /// The top-level error describing the semver violation that was detected.
+    /// Even if multiple instances of this semver issue are found, this error
+    /// message is displayed only at most once.
+    pub(crate) error_message: String,
+
+    /// Optional template that can be combined with each query output to produce
+    /// a human-readable description of the specific semver violation that was discovered.
+    #[serde(default)]
+    pub(crate) per_result_error_template: Option<String>,
+
+    /// Optional data to create witness code for query output.  See the [`Witness`] struct for
+    /// more information.
+    #[serde(default)]
+    pub witness: Option<Witness>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Witness {
+    pub hint_template: String,
+
+    #[serde(default)]
+    pub witness_template: Option<String>,
+
+    #[serde(default)]
+    pub witness_query: Option<WitnessQuery>,
+}
+
+/// A [`trustfall`] query, for [`Witness`] generation, containing the query
+/// string itself and a mapping of argument names to value types which are
+/// provided to the query.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WitnessQuery {
+    /// The string containing the Trustfall query.
+    pub query: String,
+
+    /// The mapping of argument names to values provided to the query.
+    ///
+    /// These can be inherited from a previous query ([`InheritedValue::Inherited`]) or
+    /// specified as [`InheritedValue::Constant`]s.
+    #[serde(default)]
+    pub arguments: BTreeMap<String, InheritedValue>,
+}
+
+/// Represents either a value inherited from a previous query, or a
+/// provided constant value.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged, deny_unknown_fields)]
+pub enum InheritedValue {
+    /// Inherit the value from the previous output whose name is the given `String`.
+    Inherited { inherit: String },
+    /// Provide the constant value specified here.
+    Constant(TransparentValue),
+}
+
 fn cargo_ptrace() {
+    let total_time = Instant::now();
     let current_path = r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\aws_sdk_datazone.json"#;
     let baseline_path = r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\aws_sdk_datazone.json"#;
 
@@ -363,43 +463,92 @@ fn cargo_ptrace() {
     let adapter =
         trustfall_rustdoc_adapter::RustdocAdapter::new(&current_crate, Some(&baseline_crate));
 
-    let query_path = r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\function_missing.ron"#;
-    let query: TestGraphQLQuery =
-        ron::from_str(&std::fs::read_to_string(query_path).unwrap()).unwrap();
-    let parsed_query = trustfall_core::frontend::parse(
-        &trustfall_rustdoc_adapter::RustdocAdapter::schema(),
-        &query.query,
-    )
-    .unwrap();
-    let vars: Arc<BTreeMap<Arc<str>, FieldValue>> =
-        Arc::new(query.arguments.clone().into_iter().map(|(k, v)| (k.into(), v.into())).collect());
-    let arguments = query.arguments.clone();
-    // let vars = &query.arguments.clone();
-    let result: TestParsedGraphQLQueryResult = parse_query(query.query)
-        .map_err(ParseError::from)
-        .and_then(|doc| parse_document(&doc))
-        .map(move |q| TestParsedGraphQLQuery {
-            schema_name: "Dummy".to_string(),
-            query: q,
-            arguments,
-        });
+    println!("[{:?}] Initialised Adapter", total_time.elapsed());
 
-    let test_query = trustfall_core::frontend::make_ir_for_query(
-        &trustfall_rustdoc_adapter::RustdocAdapter::schema(),
-        &result.unwrap().query,
-    );
-    let result: TestIRQueryResult = test_query.map(move |ir_query| TestIRQuery {
-        schema_name: "Dummy".to_string(),
-        ir_query,
-        arguments: query.arguments.clone(),
-    });
-    let start_instant = std::time::Instant::now();
-    // TODO: Collect results.
-    // let results = trustfall_core::interpreter::execution::interpret_ir(Arc::new(&adapter), parsed_query, vars);
-    // results.iter().collect_vec();
-    perf_trace_with_adapter(&adapter, result.unwrap());
-    let time_to_decide = start_instant.elapsed();
-    println!("total time: {:?}", time_to_decide);
+    let lints_path = r#"C:\Users\josep\dev\gsoc\cargo\cargo-semver-checks\src\lints\"#;
+    let entries = std::fs::read_dir(lints_path).unwrap();
+    for entry in entries {
+        if entry.as_ref().is_ok_and(|x| x.file_type().is_ok_and(|f| f.is_file())) {
+            let entry = entry.unwrap();
+            println!("Query {:?}", entry.file_name());
+            let path = entry.path();
+            let query_text = std::fs::read_to_string(path).unwrap();
+            let mut deserializer = ron::Deserializer::from_str_with_options(
+                &query_text,
+                ron::Options::default()
+                    .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME),
+            )
+            .unwrap();
+            let query: SemverQuery = SemverQuery::deserialize(&mut deserializer).unwrap();
+            let parsed_query = trustfall_core::frontend::parse(
+                &trustfall_rustdoc_adapter::RustdocAdapter::schema(),
+                &query.query,
+            ).unwrap();
+            
+            let vars: Arc<BTreeMap<Arc<str>, FieldValue>> = Arc::new(
+                query.arguments.clone().into_iter().map(|(k, v)| (k.into(), v.into())).collect(),
+            );
+            let arguments: BTreeMap<String, FieldValue> =
+                query.arguments.clone().into_iter().map(|(k, v)| (k.into(), v.into())).collect();
+            
+            // let results = trustfall_core::interpreter::execution::interpret_ir(Arc::new(&adapter), parsed_query, vars);
+            // results.iter().collect_vec();
+
+            let tracer = Rc::new(RefCell::new(PTrace::new(arguments)));
+            let mut adapter_tap = Arc::new(PAdapterTap::new(&adapter, tracer));
+
+            let start = std::time::Instant::now();
+            let execution_result = execution::interpret_ir(adapter_tap.clone(), parsed_query, vars);
+            match execution_result {
+                Ok(results_iter) => {
+                    // tap_results is important to produce all the traced operations.
+                    // without it only the first few queries are traced. This is
+                    // intentional behaviour - as the query is lazy, it won't run
+                    // unless the results are asked for.
+                    ptap_results(adapter_tap.clone(), results_iter).collect_vec();
+                    
+                    let trace = Arc::make_mut(&mut adapter_tap).clone().finish();
+                    let data = POutputTrace {
+                        schema_name: "Function Missing".to_owned(),
+                        time: start.elapsed(),
+                        trace,
+                    };
+                    println!(" Time: {:?}", &start.elapsed());
+                    println!(" Operations: {:?}", &data.trace.ops.len());
+                    let mut buffer = String::with_capacity(10_000_000);
+                    for op in &data.trace.ops {
+                        write!(
+                            &mut buffer,
+                            "{:?} {:?} {:?} {}\n",
+                            op.opid,
+                            op.parent_opid,
+                            op.time,
+                            format_operation(&op.content)
+                        )
+                        .unwrap();
+                    }
+                    // println!("Buffer len: {}", buffer.len());
+
+                    let mut out_path = r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\outputs\"#.to_owned();
+                    out_path.push_str(&entry.file_name().to_string_lossy());
+                    out_path.push_str(".ptrace.txt");
+                    std::fs::write(
+                        out_path,
+                        buffer,
+                    )
+                    .unwrap();
+                }
+                Err(e) => {
+                    println!("{}", serialize_to_ron(&e));
+                }
+            }
+        }
+    }
+
+    let query_path =
+        r#"C:\Users\josep\dev\gsoc\cargo\cargo-semver-checks\src\lints\function_missing.ron"#;
+
+    println!("Total Time: {:?}", total_time.elapsed());
 }
 
 #[derive(Clone)]

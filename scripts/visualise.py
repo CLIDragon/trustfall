@@ -5,10 +5,6 @@ from typing import ValuesView
 import numpy as np
 import math
 
-with open("enum_missing.ptrace.txt", encoding="utf-8") as fd:
-    lines = fd.readlines()
-
-
 class Opid(int):
     def __new__(cls, value, *args, **kwargs):
         # We use -1 as an invalid sentinel value.
@@ -114,20 +110,7 @@ class Op:
     type: str
 
 
-operations = []
-for line in lines:
-    opid, parent, duration, type = line.strip().split(" ", 3)
-    opid = Opid(opid[5:-1])
-    # Only Call may have invalid parents.
-    assert not type.startswith("Call") or parent == "None"
-    parent = Opid(None) if parent == "None" else Opid(parent[10:-2])
-
-    assert not type.startswith("YieldFrom") or duration != "None"
-    assert not type.startswith("YieldInto") or duration != "None"
-    duration = duration_from(duration[5:-1])
-    operations.append(Op(opid, parent, duration, type))
-
-def seek(start: int) -> (bool, int):
+def seek(start: int, operations: list[Op]) -> (bool, int):
     """
     Look for the next YieldFrom(ResolveNeighborsInner) or OutputIteratorExhausted,
     counting calls and Advance InputIterators. Take start to be the first index
@@ -154,152 +137,220 @@ def seek(start: int) -> (bool, int):
         if op.type in ("YieldFrom(ResolveNeighborsInner)", "OutputIteratorExhausted"):
             if calls == advances:
                 return (True, i)
-            return False
+            return (False, -1)
         elif op.type.startswith("Call"):
             if advances > 0:
-                return False
+                return (False, -1)
             calls += 1
         elif op.type.startswith("AdvanceInputIterator"):
             advances += 1
         else:
-            return False
+            return (False, -1)
+    return (False, -1)
 
-# We can use parent data to reconstruct overall function call
-# hierarchies. For now, we want to be able to map which 
-# YieldIntos belong to each YieldFrom 
-last_yield_from = None
-last_yield_into = None
+def calc_yields(filename):
+    with open(filename, encoding="utf-8") as fd:
+        lines = fd.readlines()
 
-# YieldInto(id) : [YF, YF, ...]
-yield_intos = defaultdict(list)
-advance_iterators = defaultdict(list)
-advance_parents = set()
-yielded_parents = set()
+    repeat_warnings = False
+    warned_output_iterator = False
+    warned_starting_vertices = False
+    warned_advance_input = False
 
-# YF(id) : [YI, YI, ...]
-yield_froms = defaultdict(list)
-try: 
-    i = 0
-    while i < len(operations):
-        op = operations[i]
-        if op.type == "YieldInto":
-            # No adjacent YieldIntos
-            assert operations[i-i].type != "YieldInto" and operations[i+1].type != "YieldInto"
+    operations = []
+    for line in lines:
+        opid, parent, duration, type = line.strip().split(" ", 3)
+        opid = Opid(opid[5:-1])
+        # Only Call may have invalid parents.
+        assert not type.startswith("Call") or parent == "None"
+        parent = Opid(None) if parent == "None" else Opid(parent[10:-2])
 
-            # YieldInto is always followed by a YieldFrom
-            assert operations[i+1].type.startswith("YieldFrom")
+        assert not type.startswith("YieldFrom") or duration != "None"
+        assert not type.startswith("YieldInto") or duration != "None"
+        duration = duration_from(duration[5:-1])
+        operations.append(Op(opid, parent, duration, type))
 
-            # YieldInto always has the same parent as the YieldFrom that follows it
-            assert operations[i+1].parent == op.parent
+    # YieldInto(id) : [YF, YF, ...]
+    yield_intos = defaultdict(list)
+    advance_iterators = defaultdict(list)
+    advance_parents = set()
+    yielded_parents = set()
 
-            yield_froms[operations[i+1].id].append(op.id)
+    # YF(id) : [YI, YI, ...]
+    yield_froms = defaultdict(list)
+    try: 
+        i = 0
+        while i < len(operations):
+            op = operations[i]
+            if op.type == "YieldInto":
+                # No adjacent YieldIntos
+                assert operations[i-i].type != "YieldInto" and operations[i+1].type != "YieldInto"
 
-            if yielded_parents:
-                remove = set()
-                remove_keys = []
-                for parent in yielded_parents:
-                    if op.parent != parent:
-                        # print(op.parent, parent)
-                        # print(f"Line {i}: {yielded_parents}")
-                        remove.add(parent)
+                # YieldInto is always followed by a YieldFrom
+                assert operations[i+1].type.startswith("YieldFrom")
 
-                        # TODO: Group these by parent, since that's all that matters
-                        # right now.
-                        for (opid, op_parent) in advance_iterators:
-                            if op_parent == parent:
-                                yield_intos[op.id].extend(advance_iterators[(opid, op_parent)])
-                                remove_keys.append((opid, op_parent))
+                # YieldInto always has the same parent as the YieldFrom that follows it
+                assert operations[i+1].parent == op.parent
 
-                        for key in remove_keys:
-                            del advance_iterators[key]
+                yield_froms[operations[i+1].id].append(op.id)
 
-                yielded_parents = yielded_parents.difference(remove)
-                advance_parents = advance_parents.difference(remove)
+                if yielded_parents:
+                    remove = set()
+                    remove_keys = []
+                    for parent in yielded_parents:
+                        if op.parent != parent:
+                            # print(op.parent, parent)
+                            # print(f"Line {i}: {yielded_parents}")
+                            remove.add(parent)
 
-        elif op.type.startswith("YieldFrom"):
-            if op.parent in advance_parents:
-                yielded_parents.add(op.parent)
+                            # TODO: Group these by parent, since that's all that matters
+                            # right now.
+                            for (opid, op_parent) in advance_iterators:
+                                if op_parent == parent:
+                                    yield_intos[op.id].extend(advance_iterators[(opid, op_parent)])
+                                    remove_keys.append((opid, op_parent))
 
-            if op.type == "YieldFrom(ResolveStartingVertices)":
-                # YieldFrom(ResolveStartingVertices) must be followed by a YieldInto
-                assert operations[i+1].type == "YieldInto"
-                yield_intos[operations[i+1].id].append(op.id)
-            elif op.type != "YieldFrom(ResolveNeighborsInner)":
-                # YieldFrom is always preceded by a YieldInto, unless it is a YieldFrom(ResolveStartingVertices)
-                # or a YieldFrom(ResolveNeighborsInner)
-                assert operations[i-1].type == "YieldInto"
+                            for key in remove_keys:
+                                del advance_iterators[key]
 
-            if op.type == "YieldFrom(ResolveNeighborsInner)":
-                assert operations[i+1].type == "YieldInto"
-                yield_intos[operations[i+1].id].append(op.id)
+                    yielded_parents = yielded_parents.difference(remove)
+                    advance_parents = advance_parents.difference(remove)
 
-            # Conversely, YieldFrom(ResolveNeighborsOuter) must always be followed by any 
-            # number of Calls and an equal number of AdvanceInputIterators, and then a 
-            # YieldFrom(ResolveNeighborsInner) or an OutputIteratorExhausted. 
-            # (.e. YF C C A A YF is ok, but YF C A C YF is not).
-            if op.type == "YieldFrom(ResolveNeighborsOuter)":
-                valid, idx = seek(i+1)
-                assert valid
+            elif op.type.startswith("YieldFrom"):
+                if op.parent in advance_parents:
+                    yielded_parents.add(op.parent)
 
-                # Because i is always followed by a YieldFrom(ResolveNeighborsInner)
-                if operations[idx].type == "YieldFrom(ResolveNeighborsInner)":
-                    assert operations[idx+1].type == "YieldInto"
-                    yield_intos[operations[idx+1].id].append(op.id)
-                else:
-                    # No clue what to do if it's an OutputIteratorExhausted.
-                    print(f"Warning ({i}L): YieldFrom(ResolveNeighborsOuter) followed by OutputIteratorExhausted")
-            else:
-                # 
-                assert not operations[i+1].type.startswith("YieldFrom")
-
-            # A YieldFrom followed by a YieldInto must have different parents.
-            assert operations[i+1].type != "YieldInto" or operations[i+1].parent != op.parent
-
-            if op.type in ("YieldFrom(ResolveProperty)", "YieldFrom(ResolveCoercion)"):
-                if operations[i+1].type == "YieldInto":
+                if op.type == "YieldFrom(ResolveStartingVertices)":
+                    # YieldFrom(ResolveStartingVertices) must be followed by a YieldInto
+                    assert operations[i+1].type == "YieldInto"
                     yield_intos[operations[i+1].id].append(op.id)
-                elif operations[i+1].type == "AdvanceInputIterator" and operations[i+1].parent == op.parent:
-                    advance_iterators[(operations[i+1].id, op.parent)].append(op.id)
-                    advance_parents.add(op.parent)
+                elif op.type != "YieldFrom(ResolveNeighborsInner)":
+                    # YieldFrom is always preceded by a YieldInto, unless it is a YieldFrom(ResolveStartingVertices)
+                    # or a YieldFrom(ResolveNeighborsInner)
+                    assert operations[i-1].type == "YieldInto"
+
+                if op.type == "YieldFrom(ResolveNeighborsInner)":
+                    assert operations[i+1].type in ("YieldInto", "OutputIteratorExhausted")
+                    if operations[i+1].type == "YieldInto":
+                        yield_intos[operations[i+1].id].append(op.id)
+                    else:
+                        assert operations[i+2].type == "YieldInto"
+                        yield_intos[operations[i+2].id].append(op.id)
+
+                # Conversely, YieldFrom(ResolveNeighborsOuter) must always be followed by any 
+                # number of Calls and an equal number of AdvanceInputIterators, and then a 
+                # YieldFrom(ResolveNeighborsInner) or an OutputIteratorExhausted. 
+                # (.e. YF C C A A YF is ok, but YF C A C YF is not).
+                if op.type == "YieldFrom(ResolveNeighborsOuter)":
+                    valid, idx = seek(i+1, operations)
+                    assert valid
+
+                    # Because i is always followed by a YieldFrom(ResolveNeighborsInner)
+                    if operations[idx].type == "YieldFrom(ResolveNeighborsInner)":
+                        assert operations[idx+1].type in ("YieldInto", "OutputIteratorExhausted")
+                        if operations[idx+1].type == "YieldInto":
+                            yield_intos[operations[idx+1].id].append(op.id)
+                        else:
+                            # The OutputIteratorExhausted, must be followed by a YieldInto with a different parent.
+                            assert operations[idx+2].type == "YieldInto"
+                            yield_intos[operations[idx+2].id].append(op.id)
+                    else:
+                        # Must be an OutputIteratorExhausted.
+
+                        # The OutputIteratorExhausted must be followed by an AdvanceInputIterator
+                        # which has the same parent. Then we belong to the AdvanceInputIterator
+                        assert operations[idx].type == "OutputIteratorExhausted"
+                        assert operations[idx+1].type in ("AdvanceInputIterator", "YieldInto")
+
+                        if operations[idx+1].type == "AdvanceInputIterator":
+                            assert operations[idx+1].parent == op.parent
+
+                            # This cannot get assigned to an earlier child because seek() guarantees
+                            # that the only middle entries are Call and AdvanceInputIterator.
+                            advance_iterators[(operations[idx+1].id, op.parent)].append(op.id)
+                            advance_parents.add(op.parent)
+
+                            # The discard is necessary because we set it above.
+                            yielded_parents.discard(op.parent)
+                        else:
+                            # Must be YieldInto
+                            yield_intos[operations[idx+1].id].append(op.id)
+
+                        # if repeat_warnings or not warned_output_iterator:
+                        #     print(f"Warning ({i}L): YieldFrom(ResolveNeighborsOuter) followed by OutputIteratorExhausted")
+                        #     warned_output_iterator = True
+                else:
+                    # 
+                    assert not operations[i+1].type.startswith("YieldFrom")
+
+                # A YieldFrom followed by a YieldInto must have different parents.
+                assert operations[i+1].type != "YieldInto" or operations[i+1].parent != op.parent
+
+                if op.type in ("YieldFrom(ResolveProperty)", "YieldFrom(ResolveCoercion)"):
+                    if operations[i+1].type == "YieldInto":
+                        yield_intos[operations[i+1].id].append(op.id)
+                    elif operations[i+1].type == "AdvanceInputIterator" and operations[i+1].parent == op.parent:
+                        advance_iterators[(operations[i+1].id, op.parent)].append(op.id)
+                        advance_parents.add(op.parent)
+
+                        # The discard is necessary because we set it above.
+                        yielded_parents.discard(op.parent)
+                    else:
+                        if repeat_warnings or not warned_starting_vertices:
+                            print(f"Warning ({i}L): Non-ResolveStartingVertices YieldFrom is not followed by YieldInto or an AdvanceInputIterator with the same id.")
+                            warned_starting_vertices = True
+            elif op.type.startswith("AdvanceInputIterator"):
+                if op.parent in advance_parents:
                     yielded_parents.discard(op.parent)
-                else:
-                    print(f"Warning ({i}L): Non-ResolveStartingVertices YieldFrom is not followed by YieldInto or an AdvanceInputIterator with the same id.")
-        elif op.type.startswith("AdvanceInputIterator"):
-            if op.parent in advance_parents:
-                yielded_parents.discard(op.parent)
-            # If AdvanceInputIterator is preceded by YieldFrom, then the parents of the
-            # two must be the same.
-            if operations[i-1].type.startswith("YieldFrom"):
-                if operations[i-1].parent == op.parent:
-                    # Then the following operations belong to the AdvanceInputIterator 
-                    # and the AdvanceInputIterator belongs to the next YieldFrom with a 
-                    # different parent that comes after a YieldFrom of the same parent. 
-                    pass
-                else:
-                    print(f"Warning ({i}L): AdvanceInputIterator preceded by a YieldFrom with a different parent.")
+                # If AdvanceInputIterator is preceded by YieldFrom, then the parents of the
+                # two must be the same.
+                if operations[i-1].type.startswith("YieldFrom"):
+                    if operations[i-1].parent == op.parent:
+                        # Then the following operations belong to the AdvanceInputIterator 
+                        # and the AdvanceInputIterator belongs to the next YieldFrom with a 
+                        # different parent that comes after a YieldFrom of the same parent. 
+                        pass
+                    else:
+                        if repeat_warnings or not warned_advance_input:
+                            print(f"Warning ({i}L): AdvanceInputIterator preceded by a YieldFrom with a different parent.")
+                            warned_advance_input = True
 
-        i += 1
+            i += 1
+    except AssertionError as e:
+        print(i, op)
+        # raise e
 
-        if i > 3391:
-            break
-except AssertionError as e:
-    print(i, op)
-    raise e
+    return yield_intos, yield_froms, operations
 
 
-# Work out how much time was spent in each function call (modeled by Parent)
-parents = defaultdict(list)
-for yf, yis in yield_froms.items():
-    assert len(yis) == 1
 
-    yi = yis[0]
-    op = operations[int(yf)-1]
+import os
 
-    assert op.parent != Opid(None)
-    parents[op.parent].append(op.duration - operations[int(yi)-1].duration)
 
-for parent, times in parents.items():
-    print(f"{operations[int(parent)-1].type[5:-1]} takes {sum(times, np.timedelta64(0))}")
+for entry in os.scandir(R"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\outputs"):
+    if not entry.is_file():
+        continue
+    # if entry.name not in ("method_parameter_count_changed.ron.ptrace.txt",):
+    #     continue
+    # if entry.name < "method_parameter_count_changed.ron.ptrace.txt":
+    #     continue
 
-    # We can also work out statistics here:
-    # Number of calls, mean call time, median, mode, outliers, etc.
+    print(f"Query {entry.name.split('.')[0]}")
+    yield_intos, yield_froms, operations = calc_yields(entry.path)
+
+#     # Work out how much time was spent in each function call (modeled by Parent)
+#     parents = defaultdict(list)
+#     for yf, yis in yield_froms.items():
+#         assert len(yis) == 1
+
+#         yi = yis[0]
+#         op = operations[int(yf)-1]
+
+#         assert op.parent != Opid(None)
+#         parents[op.parent].append(op.duration - operations[int(yi)-1].duration)
+
+#     for parent, times in parents.items():
+#         print(f"{operations[int(parent)-1].type[5:-1]} takes {sum(times, np.timedelta64(0))}")
+
+#         # We can also work out statistics here:
+#         # Number of calls, mean call time, median, mode, outliers, etc.
