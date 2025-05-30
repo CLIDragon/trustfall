@@ -26,22 +26,25 @@ Opid(25) Some(Opid(8)) None AdvanceInputIterator(owner: ResolveNeighbors)
 Opid(26) Some(Opid(7)) None AdvanceInputIterator(owner: ResolveProperty)
 Opid(27) Some(Opid(6)) None AdvanceInputIterator(owner: ResolveNeighbors)
 Opid(28) Some(Opid(5)) None AdvanceInputIterator(owner: ResolveProperty)
+
 Opid(29) Some(Opid(4)) None AdvanceInputIterator(owner: ResolveCoercion)
-Opid(30) Some(Opid(3)) None AdvanceInputIterator(owner: ResolveNeighbors)
-Opid(31) Some(Opid(2)) None AdvanceInputIterator(owner: ResolveNeighbors)
-Opid(32) Some(Opid(1)) Some(100ns) YieldFrom(ResolveStartingVertices)
-Opid(33) Some(Opid(2)) Some(20.5µs) YieldInto
-Opid(34) Some(Opid(2)) Some(67.8µs) YieldFrom(ResolveNeighborsOuter)
-Opid(35) Some(Opid(34)) Some(200ns) YieldFrom(ResolveNeighborsInner)
-Opid(36) Some(Opid(3)) Some(100.8µs) YieldInto
-Opid(37) Some(Opid(3)) Some(113.3µs) YieldFrom(ResolveNeighborsOuter)
-Opid(38) Some(Opid(37)) Some(1.7µs) YieldFrom(ResolveNeighborsInner)
+	Opid(30) Some(Opid(3)) None AdvanceInputIterator(owner: ResolveNeighbors)
+		Opid(31) Some(Opid(2)) None AdvanceInputIterator(owner: ResolveNeighbors)
+			Opid(32) Some(Opid(1)) Some(100ns) YieldFrom(ResolveStartingVertices)
+		Opid(33) Some(Opid(2)) Some(20.5µs) YieldInto
+		Opid(34) Some(Opid(2)) Some(67.8µs) YieldFrom(ResolveNeighborsOuter)
+		Opid(35) Some(Opid(34)) Some(200ns) YieldFrom(ResolveNeighborsInner)
+	Opid(36) Some(Opid(3)) Some(100.8µs) YieldInto
+	Opid(37) Some(Opid(3)) Some(113.3µs) YieldFrom(ResolveNeighborsOuter)
+	Opid(38) Some(Opid(37)) Some(1.7µs) YieldFrom(ResolveNeighborsInner)
 Opid(39) Some(Opid(4)) Some(120.5µs) YieldInto
 Opid(40) Some(Opid(4)) Some(142.5µs) YieldFrom(ResolveCoercion)
+---
 Opid(41) Some(Opid(4)) None AdvanceInputIterator(owner: ResolveCoercion)
 Opid(42) Some(Opid(37)) Some(500ns) YieldFrom(ResolveNeighborsInner)
 Opid(43) Some(Opid(4)) Some(1.3µs) YieldInto
 Opid(44) Some(Opid(4)) Some(3.8µs) YieldFrom(ResolveCoercion)
+---
 Opid(45) Some(Opid(4)) None AdvanceInputIterator(owner: ResolveCoercion)
 Opid(46) Some(Opid(37)) Some(400ns) YieldFrom(ResolveNeighborsInner)
 Opid(47) Some(Opid(4)) Some(1.1µs) YieldInto
@@ -50,6 +53,7 @@ Opid(49) Some(Opid(4)) None AdvanceInputIterator(owner: ResolveCoercion)
 Opid(50) Some(Opid(37)) Some(200ns) YieldFrom(ResolveNeighborsInner)
 Opid(51) Some(Opid(4)) Some(900ns) YieldInto
 Opid(52) Some(Opid(4)) Some(3.1µs) YieldFrom(ResolveCoercion)
+---
 Opid(53) Some(Opid(4)) None AdvanceInputIterator(owner: ResolveCoercion)
 Opid(54) Some(Opid(37)) Some(500ns) YieldFrom(ResolveNeighborsInner)
 Opid(55) Some(Opid(4)) Some(1.7µs) YieldInto
@@ -1508,10 +1512,12 @@ Opid(1507) Some(Opid(1495)) Some(18.1µs) YieldFrom(ResolveNeighborsOuter)
 Opid(1508) Some(Opid(1507)) Some(400ns) YieldFrom(ResolveNeighborsInner)
 Opid(1509) Some(Opid(1496)) Some(22.3µs) YieldInto
 Opid(1510) Some(Opid(1496)) Some(26.1µs) YieldFrom(ResolveCoercion)
+---
 Opid(1511) Some(Opid(1496)) None AdvanceInputIterator(owner: ResolveCoercion)
 Opid(1512) Some(Opid(1507)) Some(100ns) YieldFrom(ResolveNeighborsInner)
 Opid(1513) Some(Opid(1496)) Some(1.3µs) YieldInto
 Opid(1514) Some(Opid(1496)) Some(3.7µs) YieldFrom(ResolveCoercion)
+---
 Opid(1515) Some(Opid(1496)) None AdvanceInputIterator(owner: ResolveCoercion)
 Opid(1516) Some(Opid(1507)) Some(100ns) YieldFrom(ResolveNeighborsInner)
 Opid(1517) Some(Opid(1496)) Some(1.2µs) YieldInto
@@ -1568,10 +1574,12 @@ Opid(1567) Some(Opid(1496)) None AdvanceInputIterator(owner: ResolveCoercion)
 Opid(1568) Some(Opid(1507)) Some(200ns) YieldFrom(ResolveNeighborsInner)
 Opid(1569) Some(Opid(1496)) Some(1.1µs) YieldInto
 Opid(1570) Some(Opid(1496)) Some(3.5µs) YieldFrom(ResolveCoercion)
+---
 Opid(1571) Some(Opid(1496)) None AdvanceInputIterator(owner: ResolveCoercion)
 Opid(1572) Some(Opid(1507)) Some(100ns) YieldFrom(ResolveNeighborsInner)
 Opid(1573) Some(Opid(1496)) Some(1.1µs) YieldInto
 Opid(1574) Some(Opid(1496)) Some(4.1µs) YieldFrom(ResolveCoercion)
+---
 Opid(1575) Some(Opid(1496)) None AdvanceInputIterator(owner: ResolveCoercion)
 Opid(1576) Some(Opid(1507)) Some(100ns) YieldFrom(ResolveNeighborsInner)
 Opid(1577) Some(Opid(1496)) Some(1.1µs) YieldInto
@@ -1583,6 +1591,7 @@ Opid(1582) Some(Opid(1498)) Some(164.4µs) YieldFrom(ResolveNeighborsOuter)
 Opid(1583) Some(Opid(1582)) Some(200ns) YieldFrom(ResolveNeighborsInner)
 Opid(1584) Some(Opid(1499)) Some(168.9µs) YieldInto
 Opid(1585) Some(Opid(1499)) Some(174.7µs) YieldFrom(ResolveProperty)
+---
 Opid(1586) Some(Opid(10)) None AdvanceInputIterator(owner: ResolveNeighbors)
 Opid(1587) Some(Opid(9)) None AdvanceInputIterator(owner: ResolveProperty)
 Opid(1588) Some(Opid(1489)) None OutputIteratorExhausted

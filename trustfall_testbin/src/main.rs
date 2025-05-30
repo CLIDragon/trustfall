@@ -291,7 +291,7 @@ where
 
             // let mut buffer = String::with_capacity(100_000_000);
             // write!(&mut buffer, "{:?}", &data.trace.ops).unwrap();
-            std::fs::write(r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\enum_missing.ptrace.txt"#, buffer).unwrap();
+            std::fs::write(r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\function_missing.ptrace.txt"#, buffer).unwrap();
             // println!("{}", ron::to_string(&data).unwrap());
         }
         Err(e) => {
@@ -348,7 +348,7 @@ fn cargo_ptrace() {
     let adapter =
         trustfall_rustdoc_adapter::RustdocAdapter::new(&current_crate, Some(&baseline_crate));
 
-    let query_path = r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\enum_missing.ron"#;
+    let query_path = r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\function_missing.ron"#;
     let query: TestGraphQLQuery =
         ron::from_str(&std::fs::read_to_string(query_path).unwrap()).unwrap();
     let parsed_query = trustfall_core::frontend::parse(

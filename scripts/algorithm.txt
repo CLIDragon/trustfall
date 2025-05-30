@@ -1,0 +1,29 @@
+### Attempt 1
+Start by reading from top to bottom. Ignore some calls.
+For each Yield call, 
+	if it is a YieldFrom(ResolveStartingVertices), it must be followed by a YieldInto and belongs to that YieldInto
+	if it is a YieldInto that has the same parent as the next YieldFrom,
+then it belongs to that YieldFrom. 
+	if it is a YieldFrom followed by a YieldInto, it belongs to that YieldInto
+
+For each AdvanceInputIterator
+	if it is preceded by a YieldFrom with the same parent.
+		Then the following operations belong to the AdvanceInputIterator and the AdvanceInputIterator belongs to the next YieldInto with a different parent that comes after a YieldFrom of the same parent. 
+
+	if not, then I don't know - enum_mussing_ptrace.txt does not have enough info to decide.
+
+
+Assumptions: 
+	(1) No adjacent YieldInto calls. 
+	(2) YieldInto is always followed by a YieldFrom.
+	(2a) A YieldFrom is always preceded by a YieldInto, unless it is a YieldFrom(ResolveStartingVertices) or YieldFrom(ResolveNeighborsInner)
+	(2b) If a YieldFrom follows a YieldFrom, then it must be a YieldFrom(ResolveNeighborsOuter) followed by a YieldFrom(ResolveNeighborsInner) 
+	(2b*) Unless there is a AdvanceInputIterator in between. Then
+	(2c) Conversely, YieldFrom(ResolveNeighborsOuter) must always be followed by any number of Calls and an equal number of AdvanceInputIterators, and then a YieldFrom(ResolveNeighborsInner) or an OutputIteratorExhausted. (.e. YF C C A A YF is ok, but YF C A C YF is not).
+	(2d) YieldInto always has the same parent as its following YieldFrom
+
+	(3) A YieldFrom followed by a YieldInto must have different parents.
+	(4) A YieldFrom(ResolveStartingVertices) must be followed by a YieldInto.
+	(5) Everything but Call must have a valid parent.
+	(6) Operation ids are unique and chronologically ordered.
+	(7) YieldFrom(ResolveNeighborsInner) is always followed by a YieldInto

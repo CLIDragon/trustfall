@@ -49,3 +49,4 @@ codegen-units = 1
 
 [patch.crates-io]
 trustfall_core = { path = "./trustfall_core", version = "0.8.1" }
+trustfall-rustdoc-adapter = { path = "../trustfall-rustdoc-adapter", version = "45.0.1" }

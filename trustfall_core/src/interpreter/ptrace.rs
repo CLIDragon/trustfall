@@ -351,6 +351,11 @@ where
                 let tracer_ref_6 = tracer_ref_5.clone();
                 let tapped_neighbor_iter = Box::new(
                     make_iter_with_perf_span(neighbor_iter.enumerate(), move |(pos, vertex), d| {
+                        // tracer_ref_6.borrow_mut().record(
+                        //     TraceOpContent::AdvanceInputIterator(CallType::ResolveNeighbors),
+                        //     Some(outer_iterator_opid),
+                        //     Some(d),
+                        // );
                         tracer_ref_6.borrow_mut().record(
                             TraceOpContent::YieldFrom(YieldValue::ResolveNeighborsInner(
                                 pos,
