@@ -6,15 +6,13 @@ use std::{
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::{
-    interpreter::{Adapter},
-    ir::{EdgeParameters, FieldValue},
+    interpreter::Adapter,
+    ir::{EdgeParameters, Eid, FieldValue, Vid},
     util::BTreeMapTryInsertExt,
 };
 
 use super::{
-    trace::{make_iter_with_end_action, make_iter_with_pre_action, CallType},
-    AsVertex, ContextIterator, ContextOutcomeIterator, ResolveEdgeInfo, ResolveInfo, VertexInfo,
-    VertexIterator,
+    trace::{make_iter_with_end_action, make_iter_with_pre_action}, AsVertex, ContextIterator, ContextOutcomeIterator, DataContext, ResolveEdgeInfo, ResolveInfo, VertexInfo, VertexIterator
 };
 use std::time::Instant;
 
@@ -40,12 +38,12 @@ where
 {
     #[allow(dead_code)]
     pub fn new(arguments: BTreeMap<String, FieldValue>) -> Self {
-        Self { ops: Default::default(), arguments }
+        Self { ops: BTreeMap::new(), arguments }
     }
 
     pub fn record(
         &mut self,
-        content: TraceOpContent<Vertex>,
+        content: PTraceOpContent<Vertex>,
         parent: Option<Opid>,
         time: Option<Duration>,
     ) -> Opid {
@@ -63,7 +61,44 @@ pub struct PTraceOp<Vertex> {
     pub opid: Opid,
     pub parent_opid: Option<Opid>, // None parent_opid means this is a top-level operation
     pub time: Option<Duration>,
-    pub content: TraceOpContent<Vertex>,
+    pub content: PTraceOpContent<Vertex>,
+}
+
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "Vertex: Debug + Clone + Serialize + DeserializeOwned")]
+pub enum PTraceOpContent<Vertex> {
+    // TODO: make a way to differentiate between different queries recorded in the same trace
+    Call(FunctionCall),
+
+    AdvanceInputIterator,
+    YieldInto,
+    YieldFrom(PYieldValue<Vertex>),
+
+    InputIteratorExhausted,
+    OutputIteratorExhausted,
+
+    ProduceQueryResult(BTreeMap<Arc<str>, FieldValue>),
+}
+
+// #[allow(clippy::enum_variant_names)] // the variant names match the functions they represent
+// #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// pub enum FunctionCall {
+//     ResolveStartingVertices(Vid),             // vertex ID
+//     ResolveProperty(Vid, Arc<str>, Arc<str>), // vertex ID + type name + name of the property
+//     ResolveNeighbors(Vid, Arc<str>, Eid),     // vertex ID + type name + edge ID
+//     ResolveCoercion(Vid, Arc<str>, Arc<str>), // vertex ID + current type + coerced-to type
+// }
+
+#[allow(clippy::enum_variant_names)] // the variant names match the functions they represent
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "Vertex: Debug + Clone + Serialize + DeserializeOwned")]
+pub enum PYieldValue<Vertex> {
+    ResolveStartingVertices(Vertex),
+    ResolveProperty,
+    ResolveNeighborsOuter,
+    ResolveNeighborsInner, // iterable index + produced element
+    ResolveCoercion,
 }
 
 /// An adapter "middleware" that records all adapter operations into a linear, replayable trace.
@@ -113,7 +148,7 @@ where
 {
     Box::new(make_iter_with_perf_span(result_iter, move |result, d| {
         adapter_tap.tracer.borrow_mut().record(
-            TraceOpContent::ProduceQueryResult(result.clone()),
+            PTraceOpContent::ProduceQueryResult(result.clone()),
             None,
             Some(d),
         );
@@ -171,7 +206,7 @@ where
     ) -> VertexIterator<'vertex, Self::Vertex> {
         let mut trace = self.tracer.borrow_mut();
         let call_opid = trace.record(
-            TraceOpContent::Call(FunctionCall::ResolveStartingVertices(resolve_info.vid())),
+            PTraceOpContent::Call(FunctionCall::ResolveStartingVertices(resolve_info.vid())),
             None,
             None,
         );
@@ -183,7 +218,7 @@ where
         // let x = Box::new(make_iter_with_perf_span(inner_iter, tracer_ref_1));
         let x = Box::new(make_iter_with_perf_span(inner_iter, move |v, d| {
             tracer_ref_1.borrow_mut().record(
-                TraceOpContent::YieldFrom(YieldValue::ResolveStartingVertices(v.clone())),
+                PTraceOpContent::YieldFrom(PYieldValue::ResolveStartingVertices(v.clone())),
                 Some(call_opid),
                 Some(d),
             );
@@ -192,7 +227,7 @@ where
 
         Box::new(make_iter_with_end_action(x, move || {
             tracer_ref_2.borrow_mut().record(
-                TraceOpContent::OutputIteratorExhausted,
+                PTraceOpContent::OutputIteratorExhausted,
                 Some(call_opid),
                 None,
             );
@@ -208,7 +243,7 @@ where
     ) -> ContextOutcomeIterator<'vertex, V, FieldValue> {
         let mut trace = self.tracer.borrow_mut();
         let call_opid = trace.record(
-            TraceOpContent::Call(FunctionCall::ResolveProperty(
+            PTraceOpContent::Call(FunctionCall::ResolveProperty(
                 resolve_info.vid(),
                 type_name.clone(),
                 property_name.clone(),
@@ -224,7 +259,7 @@ where
 
         let x = Box::new(make_iter_with_perf_span(contexts, move |context, d| {
             tracer_ref_3.borrow_mut().record(
-                TraceOpContent::YieldInto(context.clone().flat_map(&mut |v| v.into_vertex())),
+                PTraceOpContent::YieldInto,
                 Some(call_opid),
                 Some(d),
             );
@@ -234,14 +269,14 @@ where
         let wrapped_contexts = Box::new(make_iter_with_end_action(
             make_iter_with_pre_action(x, move || {
                 tracer_ref_1.borrow_mut().record(
-                    TraceOpContent::AdvanceInputIterator(CallType::ResolveProperty),
+                    PTraceOpContent::AdvanceInputIterator,
                     Some(call_opid),
                     None,
                 );
             }),
             move || {
                 tracer_ref_2.borrow_mut().record(
-                    TraceOpContent::InputIteratorExhausted,
+                    PTraceOpContent::InputIteratorExhausted,
                     Some(call_opid),
                     None,
                 );
@@ -256,10 +291,11 @@ where
 
         let x = Box::new(make_iter_with_perf_span(inner_iter, move |(context, value), d| {
             tracer_ref_5.borrow_mut().record(
-                TraceOpContent::YieldFrom(YieldValue::ResolveProperty(
-                    context.clone().flat_map(&mut |v| v.into_vertex()),
-                    value.clone(),
-                )),
+                // PTraceOpContent::YieldFrom(PYieldValue::ResolveProperty(
+                //     context.clone().flat_map(&mut |v| v.into_vertex()),
+                //     value.clone(),
+                // )),
+                PTraceOpContent::YieldFrom(PYieldValue::ResolveProperty),
                 Some(call_opid),
                 Some(d),
             );
@@ -268,7 +304,7 @@ where
 
         Box::new(make_iter_with_end_action(x, move || {
             tracer_ref_4.borrow_mut().record(
-                TraceOpContent::OutputIteratorExhausted,
+                PTraceOpContent::OutputIteratorExhausted,
                 Some(call_opid),
                 None,
             );
@@ -285,7 +321,7 @@ where
     ) -> ContextOutcomeIterator<'vertex, V, VertexIterator<'vertex, Self::Vertex>> {
         let mut trace = self.tracer.borrow_mut();
         let call_opid = trace.record(
-            TraceOpContent::Call(FunctionCall::ResolveNeighbors(
+            PTraceOpContent::Call(FunctionCall::ResolveNeighbors(
                 resolve_info.origin_vid(),
                 type_name.clone(),
                 resolve_info.eid(),
@@ -301,7 +337,7 @@ where
 
         let x = Box::new(make_iter_with_perf_span(contexts, move |context, d| {
             tracer_ref_3.borrow_mut().record(
-                TraceOpContent::YieldInto(context.clone().flat_map(&mut |v| v.into_vertex())),
+                PTraceOpContent::YieldInto,
                 Some(call_opid),
                 Some(d),
             );
@@ -311,14 +347,14 @@ where
         let wrapped_contexts = Box::new(make_iter_with_end_action(
             make_iter_with_pre_action(x, move || {
                 tracer_ref_1.borrow_mut().record(
-                    TraceOpContent::AdvanceInputIterator(CallType::ResolveNeighbors),
+                    PTraceOpContent::AdvanceInputIterator,
                     Some(call_opid),
                     None,
                 );
             }),
             move || {
                 tracer_ref_2.borrow_mut().record(
-                    TraceOpContent::InputIteratorExhausted,
+                    PTraceOpContent::InputIteratorExhausted,
                     Some(call_opid),
                     None,
                 );
@@ -340,9 +376,10 @@ where
             Box::new(make_iter_with_perf_span(inner_iter, move |(context, neighbor_iter), d| {
                 let mut trace = tracer_ref_5.borrow_mut();
                 let outer_iterator_opid = trace.record(
-                    TraceOpContent::YieldFrom(YieldValue::ResolveNeighborsOuter(
-                        context.clone().flat_map(&mut |v| v.into_vertex()),
-                    )),
+                    // PTraceOpContent::YieldFrom(PYieldValue::ResolveNeighborsOuter(
+                    //     context.clone().flat_map(&mut |v| v.into_vertex()),
+                    // )),
+                    PTraceOpContent::YieldFrom(PYieldValue::ResolveNeighborsOuter),
                     Some(call_opid),
                     Some(d),
                 );
@@ -357,10 +394,11 @@ where
                         //     Some(d),
                         // );
                         tracer_ref_6.borrow_mut().record(
-                            TraceOpContent::YieldFrom(YieldValue::ResolveNeighborsInner(
-                                pos,
-                                vertex.clone(),
-                            )),
+                            // PTraceOpContent::YieldFrom(PYieldValue::ResolveNeighborsInner(
+                            //     pos,
+                            //     vertex.clone(),
+                            // )),
+                            PTraceOpContent::YieldFrom(PYieldValue::ResolveNeighborsInner),
                             Some(outer_iterator_opid),
                             Some(d),
                         );
@@ -373,7 +411,7 @@ where
                 let final_neighbor_iter: VertexIterator<'vertex, Self::Vertex> =
                     Box::new(make_iter_with_end_action(tapped_neighbor_iter, move || {
                         tracer_ref_7.borrow_mut().record(
-                            TraceOpContent::OutputIteratorExhausted,
+                            PTraceOpContent::OutputIteratorExhausted,
                             Some(outer_iterator_opid),
                             None,
                         );
@@ -384,7 +422,7 @@ where
 
         Box::new(make_iter_with_end_action(x, move || {
             tracer_ref_4.borrow_mut().record(
-                TraceOpContent::OutputIteratorExhausted,
+                PTraceOpContent::OutputIteratorExhausted,
                 Some(call_opid),
                 None,
             );
@@ -400,7 +438,7 @@ where
     ) -> ContextOutcomeIterator<'vertex, V, bool> {
         let mut trace = self.tracer.borrow_mut();
         let call_opid = trace.record(
-            TraceOpContent::Call(FunctionCall::ResolveCoercion(
+            PTraceOpContent::Call(FunctionCall::ResolveCoercion(
                 resolve_info.vid(),
                 type_name.clone(),
                 coerce_to_type.clone(),
@@ -416,7 +454,7 @@ where
 
         let x = Box::new(make_iter_with_perf_span(contexts, move |context, d| {
             tracer_ref_3.borrow_mut().record(
-                TraceOpContent::YieldInto(context.clone().flat_map(&mut |v| v.into_vertex())),
+                PTraceOpContent::YieldInto,
                 Some(call_opid),
                 Some(d),
             );
@@ -426,14 +464,14 @@ where
         let wrapped_contexts = Box::new(make_iter_with_end_action(
             make_iter_with_pre_action(x, move || {
                 tracer_ref_1.borrow_mut().record(
-                    TraceOpContent::AdvanceInputIterator(CallType::ResolveCoercion),
+                    PTraceOpContent::AdvanceInputIterator,
                     Some(call_opid),
                     None,
                 );
             }),
             move || {
                 tracer_ref_2.borrow_mut().record(
-                    TraceOpContent::InputIteratorExhausted,
+                    PTraceOpContent::InputIteratorExhausted,
                     Some(call_opid),
                     None,
                 );
@@ -448,10 +486,7 @@ where
 
         let x = Box::new(make_iter_with_perf_span(inner_iter, move |(context, can_coerce), d| {
             tracer_ref_5.borrow_mut().record(
-                TraceOpContent::YieldFrom(YieldValue::ResolveCoercion(
-                    context.clone().flat_map(&mut |v| v.into_vertex()),
-                    can_coerce,
-                )),
+                PTraceOpContent::YieldFrom(PYieldValue::ResolveCoercion),
                 Some(call_opid),
                 Some(d),
             );
@@ -460,7 +495,7 @@ where
 
         Box::new(make_iter_with_end_action(x, move || {
             tracer_ref_4.borrow_mut().record(
-                TraceOpContent::OutputIteratorExhausted,
+                PTraceOpContent::OutputIteratorExhausted,
                 Some(call_opid),
                 None,
             );

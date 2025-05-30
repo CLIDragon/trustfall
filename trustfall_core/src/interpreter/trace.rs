@@ -63,7 +63,7 @@ pub enum TraceOpContent<Vertex> {
     // TODO: make a way to differentiate between different queries recorded in the same trace
     Call(FunctionCall),
 
-    AdvanceInputIterator(CallType),
+    AdvanceInputIterator,
     YieldInto(DataContext<Vertex>),
     YieldFrom(YieldValue<Vertex>),
 
@@ -91,15 +91,6 @@ pub enum YieldValue<Vertex> {
     ResolveNeighborsOuter(DataContext<Vertex>),
     ResolveNeighborsInner(usize, Vertex), // iterable index + produced element
     ResolveCoercion(DataContext<Vertex>, bool),
-}
-
-#[allow(clippy::enum_variant_names)] // the variant names match the functions they represent
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CallType {
-    ResolveStartingVertices,
-    ResolveProperty,
-    ResolveNeighbors,
-    ResolveCoercion,
 }
 
 pub struct OnIterEnd<T, I: Iterator<Item = T>, F: FnOnce()> {
@@ -275,7 +266,7 @@ where
                 make_iter_with_pre_action(contexts, move || {
                     tracer_ref_1
                         .borrow_mut()
-                        .record(TraceOpContent::AdvanceInputIterator(CallType::ResolveProperty), Some(call_opid));
+                        .record(TraceOpContent::AdvanceInputIterator, Some(call_opid));
                 }),
                 move || {
                     tracer_ref_2
@@ -342,7 +333,7 @@ where
                 make_iter_with_pre_action(contexts, move || {
                     tracer_ref_1
                         .borrow_mut()
-                        .record(TraceOpContent::AdvanceInputIterator(CallType::ResolveNeighbors), Some(call_opid));
+                        .record(TraceOpContent::AdvanceInputIterator, Some(call_opid));
                 }),
                 move || {
                     tracer_ref_2
@@ -436,7 +427,7 @@ where
                 make_iter_with_pre_action(contexts, move || {
                     tracer_ref_1
                         .borrow_mut()
-                        .record(TraceOpContent::AdvanceInputIterator(CallType::ResolveCoercion), Some(call_opid));
+                        .record(TraceOpContent::AdvanceInputIterator, Some(call_opid));
                 }),
                 move || {
                     tracer_ref_2

@@ -27,7 +27,7 @@ use trustfall_core::{
     interpreter::{
         error::QueryArgumentsError,
         execution,
-        ptrace::{self, ptap_results, PAdapterTap, PTrace, PTraceOp, VertexT},
+        ptrace::{self, ptap_results, PAdapterTap, PTrace, PTraceOp, PTraceOpContent, PYieldValue, VertexT},
         trace::{tap_results, AdapterTap, Opid, Trace, TraceOpContent, YieldValue},
         Adapter,
     },
@@ -277,12 +277,12 @@ where
             // intentional behaviour - as the query is lazy, it won't run
             // unless the results are asked for.
             ptap_results(adapter_tap.clone(), results_iter).collect_vec();
+            println!("Run time: {:?}", &start.elapsed());
 
             let trace = Arc::make_mut(&mut adapter_tap).clone().finish();
             let data =
                 POutputTrace { schema_name: test_query.schema_name, time: start.elapsed(), trace };
             println!("Operations: {:?}", &data.trace.ops.len());
-            println!("Time: {:?}", &data.time);
             let mut buffer = String::with_capacity(10_000_000);
             for (opid, op) in &data.trace.ops {
                 write!(&mut buffer, "{:?} {:?} {:?} {}\n", opid, op.parent_opid, op.time, format_operation(&op.content)).unwrap();
@@ -330,8 +330,8 @@ fn perf_trace(path: &str) {
 }
 
 fn cargo_ptrace() {
-    let current_path = r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\serde.json"#;
-    let baseline_path = r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\serde.json"#;
+    let current_path = r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\aws_sdk_datazone.json"#;
+    let baseline_path = r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\aws_sdk_datazone.json"#;
 
     let current_rustdoc: trustfall_rustdoc_adapter::Crate =
         serde_json::from_str(&std::fs::read_to_string(current_path).unwrap()).unwrap();
@@ -380,8 +380,9 @@ fn cargo_ptrace() {
     });
     let start_instant = std::time::Instant::now();
     // TODO: Collect results.
-    // let results = trustfall_core::interpreter::execution::interpret_ir(Arc::new(&adapter), parsed_query, vars);
-    perf_trace_with_adapter(&adapter, result.unwrap());
+    let results = trustfall_core::interpreter::execution::interpret_ir(Arc::new(&adapter), parsed_query, vars);
+    results.iter().collect_vec();
+    // perf_trace_with_adapter(&adapter, result.unwrap());
     let time_to_decide = start_instant.elapsed();
     println!("total time: {:?}", time_to_decide);
 }
@@ -402,27 +403,24 @@ struct Operation<Vertex> {
 //     }
 // }
 
-fn format_operation<Vertex: Debug>(op: &TraceOpContent<Vertex>) -> String {
+fn format_operation<Vertex: Debug>(op: &ptrace::PTraceOpContent<Vertex>) -> String {
     match op {
-        TraceOpContent::Call(x) => format!("Call({:?})", x),
-        TraceOpContent::AdvanceInputIterator(x) => format!("AdvanceInputIterator(owner: {:?})", x),
-        TraceOpContent::YieldInto(data_context) => {
-            let x = data_context;
-            format!("YieldInto")
-        }
-        TraceOpContent::YieldFrom(val) => {
+        PTraceOpContent::Call(x) => format!("Call({:?})", x),
+        PTraceOpContent::AdvanceInputIterator => format!("AdvanceInputIterator"),
+        PTraceOpContent::YieldInto => format!("YieldInto"),
+        PTraceOpContent::YieldFrom(val) => {
             let x = match val {
-                YieldValue::ResolveStartingVertices(_) => format!("ResolveStartingVertices"),
-                YieldValue::ResolveProperty(_, _) => format!("ResolveProperty"),
-                YieldValue::ResolveNeighborsOuter(_) => format!("ResolveNeighborsOuter"),
-                YieldValue::ResolveNeighborsInner(_, _) => format!("ResolveNeighborsInner"),
-                YieldValue::ResolveCoercion(_, _) => format!("ResolveCoercion"),
+                PYieldValue::ResolveStartingVertices(_) => format!("ResolveStartingVertices"),
+                PYieldValue::ResolveProperty => format!("ResolveProperty"),
+                PYieldValue::ResolveNeighborsOuter => format!("ResolveNeighborsOuter"),
+                PYieldValue::ResolveNeighborsInner => format!("ResolveNeighborsInner"),
+                PYieldValue::ResolveCoercion => format!("ResolveCoercion"),
             };
             format!("YieldFrom({})", x)
         }
-        TraceOpContent::InputIteratorExhausted => format!("InputIteratorExhausted"),
-        TraceOpContent::OutputIteratorExhausted => format!("OutputIteratorExhausted"),
-        TraceOpContent::ProduceQueryResult(_) => format!("ProduceQueryResult"),
+        PTraceOpContent::InputIteratorExhausted => format!("InputIteratorExhausted"),
+        PTraceOpContent::OutputIteratorExhausted => format!("OutputIteratorExhausted"),
+        PTraceOpContent::ProduceQueryResult(_) => format!("ProduceQueryResult"),
     }
 }
 
@@ -456,7 +454,7 @@ fn perf_visualise(path: &str) {
     // }
     let aggregate_time: Duration = operations
         .values()
-        .filter(|op| matches!(op.op.content, TraceOpContent::ProduceQueryResult(_)))
+        .filter(|op| matches!(op.op.content, PTraceOpContent::ProduceQueryResult(_)))
         .filter_map(|op| op.op.time)
         .sum();
     println!("time (agg): {:?}", aggregate_time);
@@ -486,7 +484,7 @@ fn perf_visualise(path: &str) {
                 op.op.time,
                 format_operation(&op.op.content)
             );
-            if matches!(op.op.content, TraceOpContent::ProduceQueryResult(_)) {
+            if matches!(op.op.content, PTraceOpContent::ProduceQueryResult(_)) {
                 println!("");
             }
         } else {
