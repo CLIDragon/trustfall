@@ -26,7 +26,7 @@ impl<T: Clone + Debug> VertexT for T {}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "Vertex: Debug + Clone + Serialize + DeserializeOwned")]
 pub struct PTrace<Vertex> {
-    pub ops: BTreeMap<Opid, PTraceOp<Vertex>>,
+    pub ops: Vec<PTraceOp<Vertex>>,
 
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub arguments: BTreeMap<String, FieldValue>,
@@ -38,7 +38,7 @@ where
 {
     #[allow(dead_code)]
     pub fn new(arguments: BTreeMap<String, FieldValue>) -> Self {
-        Self { ops: BTreeMap::new(), arguments }
+        Self { ops: Vec::with_capacity(100_000), arguments }
     }
 
     pub fn record(
@@ -50,7 +50,7 @@ where
         let next_opid = Opid(NonZeroUsize::new(self.ops.len() + 1).unwrap());
 
         let op = PTraceOp { opid: next_opid, parent_opid: parent, time: time, content };
-        self.ops.insert_or_error(next_opid, op).unwrap();
+        self.ops.push(op);
         next_opid
     }
 }
@@ -173,6 +173,8 @@ where
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
+        // let _rng = rand::random::<u64>();
+        // let _span = tracy_client::Client::running().unwrap().span_alloc(Some(&format!("{}", _rng)), "test", "ptrace.rs", 177, 0);
         let start = Instant::now();
         let item = self.inner.next();
         let time = start.elapsed();
@@ -216,14 +218,14 @@ where
         let tracer_ref_1 = self.tracer.clone();
         let tracer_ref_2 = self.tracer.clone();
         // let x = Box::new(make_iter_with_perf_span(inner_iter, tracer_ref_1));
-        let x = Box::new(make_iter_with_perf_span(inner_iter, move |v, d| {
+        let x = make_iter_with_perf_span(inner_iter, move |v, d| {
             tracer_ref_1.borrow_mut().record(
                 PTraceOpContent::YieldFrom(PYieldValue::ResolveStartingVertices(v.clone())),
                 Some(call_opid),
                 Some(d),
             );
             v
-        }));
+        });
 
         Box::new(make_iter_with_end_action(x, move || {
             tracer_ref_2.borrow_mut().record(
@@ -257,14 +259,14 @@ where
         let tracer_ref_2 = self.tracer.clone();
         let tracer_ref_3 = self.tracer.clone();
 
-        let x = Box::new(make_iter_with_perf_span(contexts, move |context, d| {
+        let x = make_iter_with_perf_span(contexts, move |context, d| {
             tracer_ref_3.borrow_mut().record(
                 PTraceOpContent::YieldInto,
                 Some(call_opid),
                 Some(d),
             );
             context
-        }));
+        });
 
         let wrapped_contexts = Box::new(make_iter_with_end_action(
             make_iter_with_pre_action(x, move || {
@@ -289,7 +291,7 @@ where
         let tracer_ref_4 = self.tracer.clone();
         let tracer_ref_5 = self.tracer.clone();
 
-        let x = Box::new(make_iter_with_perf_span(inner_iter, move |(context, value), d| {
+        let x = make_iter_with_perf_span(inner_iter, move |(context, value), d| {
             tracer_ref_5.borrow_mut().record(
                 // PTraceOpContent::YieldFrom(PYieldValue::ResolveProperty(
                 //     context.clone().flat_map(&mut |v| v.into_vertex()),
@@ -300,7 +302,7 @@ where
                 Some(d),
             );
             (context, value)
-        }));
+        });
 
         Box::new(make_iter_with_end_action(x, move || {
             tracer_ref_4.borrow_mut().record(
@@ -335,14 +337,14 @@ where
         let tracer_ref_2 = self.tracer.clone();
         let tracer_ref_3 = self.tracer.clone();
 
-        let x = Box::new(make_iter_with_perf_span(contexts, move |context, d| {
+        let x = make_iter_with_perf_span(contexts, move |context, d| {
             tracer_ref_3.borrow_mut().record(
                 PTraceOpContent::YieldInto,
                 Some(call_opid),
                 Some(d),
             );
             context
-        }));
+        });
 
         let wrapped_contexts = Box::new(make_iter_with_end_action(
             make_iter_with_pre_action(x, move || {
@@ -373,7 +375,7 @@ where
         let tracer_ref_5 = self.tracer.clone();
 
         let x =
-            Box::new(make_iter_with_perf_span(inner_iter, move |(context, neighbor_iter), d| {
+            make_iter_with_perf_span(inner_iter, move |(context, neighbor_iter), d| {
                 let mut trace = tracer_ref_5.borrow_mut();
                 let outer_iterator_opid = trace.record(
                     // PTraceOpContent::YieldFrom(PYieldValue::ResolveNeighborsOuter(
@@ -418,7 +420,7 @@ where
                     }));
 
                 (context, final_neighbor_iter)
-            }));
+            });
 
         Box::new(make_iter_with_end_action(x, move || {
             tracer_ref_4.borrow_mut().record(

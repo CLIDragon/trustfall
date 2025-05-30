@@ -3,6 +3,7 @@
 #![forbid(elided_lifetimes_in_paths)]
 
 use anyhow::Context as _;
+use trustfall_rustdoc_adapter::RustdocAdapter;
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -27,7 +28,10 @@ use trustfall_core::{
     interpreter::{
         error::QueryArgumentsError,
         execution,
-        ptrace::{self, ptap_results, PAdapterTap, PTrace, PTraceOp, PTraceOpContent, PYieldValue, VertexT},
+        ptrace::{
+            self, ptap_results, PAdapterTap, PTrace, PTraceOp, PTraceOpContent, PYieldValue,
+            VertexT,
+        },
         trace::{tap_results, AdapterTap, Opid, Trace, TraceOpContent, YieldValue},
         Adapter,
     },
@@ -171,7 +175,6 @@ fn outputs(path: &str) {
     };
 }
 
-
 fn trace_with_adapter<'a, AdapterT>(
     adapter: AdapterT,
     test_query: TestIRQuery,
@@ -284,14 +287,26 @@ where
                 POutputTrace { schema_name: test_query.schema_name, time: start.elapsed(), trace };
             println!("Operations: {:?}", &data.trace.ops.len());
             let mut buffer = String::with_capacity(10_000_000);
-            for (opid, op) in &data.trace.ops {
-                write!(&mut buffer, "{:?} {:?} {:?} {}\n", opid, op.parent_opid, op.time, format_operation(&op.content)).unwrap();
+            for (op) in &data.trace.ops {
+                write!(
+                    &mut buffer,
+                    "{:?} {:?} {:?} {}\n",
+                    op.opid,
+                    op.parent_opid,
+                    op.time,
+                    format_operation(&op.content)
+                )
+                .unwrap();
             }
             println!("Buffer len: {}", buffer.len());
 
             // let mut buffer = String::with_capacity(100_000_000);
             // write!(&mut buffer, "{:?}", &data.trace.ops).unwrap();
-            std::fs::write(r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\function_missing.ptrace.txt"#, buffer).unwrap();
+            std::fs::write(
+                r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\function_missing.ptrace.txt"#,
+                buffer,
+            )
+            .unwrap();
             // println!("{}", ron::to_string(&data).unwrap());
         }
         Err(e) => {
@@ -380,9 +395,9 @@ fn cargo_ptrace() {
     });
     let start_instant = std::time::Instant::now();
     // TODO: Collect results.
-    let results = trustfall_core::interpreter::execution::interpret_ir(Arc::new(&adapter), parsed_query, vars);
-    results.iter().collect_vec();
-    // perf_trace_with_adapter(&adapter, result.unwrap());
+    // let results = trustfall_core::interpreter::execution::interpret_ir(Arc::new(&adapter), parsed_query, vars);
+    // results.iter().collect_vec();
+    perf_trace_with_adapter(&adapter, result.unwrap());
     let time_to_decide = start_instant.elapsed();
     println!("total time: {:?}", time_to_decide);
 }
@@ -434,12 +449,13 @@ fn perf_visualise(path: &str) {
     let trace_ops = trace_data.trace.ops;
     let mut roots = Vec::new();
     let mut operations: HashMap<Opid, Operation<NumbersVertex>> = HashMap::new();
-    for (opid, op) in trace_ops {
+    for op in trace_ops {
         match op.parent_opid {
-            Some(id) => operations.get_mut(&id).unwrap().children.push(opid),
-            None => roots.push(opid),
+            Some(id) => operations.get_mut(&id).unwrap().children.push(op.opid),
+            None => roots.push(op.opid),
         }
-        let operation = Operation { opid, op, children: Vec::new() };
+        let opid = op.opid.clone();
+        let operation = Operation { opid: op.opid, op, children: Vec::new() };
         operations.insert(opid, operation);
     }
 
@@ -585,6 +601,8 @@ fn corpus_graphql(path: &str, schema_name: &str) {
 fn main() {
     let args: Vec<String> = env::args().collect();
     let mut reversed_args: Vec<_> = args.iter().map(|x| x.as_str()).rev().collect();
+
+    println!("Size of {}", size_of::<PTraceOp<NumbersVertex>>());
 
     reversed_args
         .pop()
