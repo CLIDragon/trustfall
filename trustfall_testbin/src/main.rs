@@ -468,7 +468,7 @@ fn cargo_ptrace() {
     let lints_path = r#"C:\Users\josep\dev\gsoc\cargo\cargo-semver-checks\src\lints\"#;
     let entries = std::fs::read_dir(lints_path).unwrap();
     for entry in entries {
-        let _span = tracy_client::non_continuous_frame!("Query");
+        // let _span = tracy_client::non_continuous_frame!("Query");
         
         if entry.as_ref().is_ok_and(|x| x.file_type().is_ok_and(|f| f.is_file())) {
             let entry = entry.unwrap();
@@ -533,7 +533,7 @@ fn cargo_ptrace() {
                     }
                     // println!("Buffer len: {}", buffer.len());
 
-                    let mut out_path = r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\outputs\"#.to_owned();
+                    let mut out_path = r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\outputs_post\"#.to_owned();
                     out_path.push_str(&entry.file_name().to_string_lossy());
                     out_path.push_str(".ptrace.txt");
                     std::fs::write(
@@ -548,7 +548,7 @@ fn cargo_ptrace() {
             }
         }
 
-        drop(_span);
+        // drop(_span);
     }
 
     println!("Total Time: {:?}", total_time.elapsed());
