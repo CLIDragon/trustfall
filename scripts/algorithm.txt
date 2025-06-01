@@ -26,5 +26,7 @@ Assumptions:
 	(4) A YieldFrom(ResolveStartingVertices) must be followed by a YieldInto.
 	(5) Everything but Call must have a valid parent.
 	(6) Operation ids are unique and chronologically ordered.
-	(7) YieldFrom(ResolveNeighborsInner) is always followed by a YieldInto or OutputIteratorExhausted
+	(7) YieldFrom(ResolveNeighborsInner) is always followed by a YieldInto or OutputIteratorExhausted or AdvanceInputIterator or a YieldFrom(ResolveNeighborsInner)
 	(7a) If it's followed by an OutputIteratorExhausted, then that must be followed by a YieldInto with a different parent.
+	(7b) If it's followed by an AdvanceInputIterator, then this represents the end of a call (e.g. the parent function found what it wanted immediately), and so this should be treated the same as for any other YieldFrom encountering and AdvanceInputIterator.
+	(7c) The YieldFrom(ResolveNeighborsInner) must have the same parent.
