@@ -279,7 +279,7 @@ where
             // without it only the first few queries are traced. This is
             // intentional behaviour - as the query is lazy, it won't run
             // unless the results are asked for.
-            ptap_results(adapter_tap.clone(), results_iter).collect_vec();
+            let results = ptap_results(adapter_tap.clone(), results_iter).collect_vec();
             println!("Run time: {:?}", &start.elapsed());
 
             let trace = Arc::make_mut(&mut adapter_tap).clone().finish();
@@ -445,8 +445,8 @@ pub enum InheritedValue {
 
 fn cargo_ptrace() {
     let total_time = Instant::now();
-    let current_path = r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\aws_sdk_datazone.json"#;
-    let baseline_path = r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\aws_sdk_datazone.json"#;
+    let current_path = r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\serde.json"#;
+    let baseline_path = r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\serde_old.json"#;
 
     let current_rustdoc: trustfall_rustdoc_adapter::Crate =
         serde_json::from_str(&std::fs::read_to_string(current_path).unwrap()).unwrap();
@@ -468,9 +468,12 @@ fn cargo_ptrace() {
     let lints_path = r#"C:\Users\josep\dev\gsoc\cargo\cargo-semver-checks\src\lints\"#;
     let entries = std::fs::read_dir(lints_path).unwrap();
     for entry in entries {
+        let _span = tracy_client::non_continuous_frame!("Query");
+        
         if entry.as_ref().is_ok_and(|x| x.file_type().is_ok_and(|f| f.is_file())) {
             let entry = entry.unwrap();
             println!("Query {:?}", entry.file_name());
+
             let path = entry.path();
             let query_text = std::fs::read_to_string(path).unwrap();
             let mut deserializer = ron::Deserializer::from_str_with_options(
@@ -506,16 +509,17 @@ fn cargo_ptrace() {
                     // intentional behaviour - as the query is lazy, it won't run
                     // unless the results are asked for.
                     ptap_results(adapter_tap.clone(), results_iter).collect_vec();
-                    
+                    let runtime = start.elapsed();
                     let trace = Arc::make_mut(&mut adapter_tap).clone().finish();
                     let data = POutputTrace {
                         schema_name: "Function Missing".to_owned(),
-                        time: start.elapsed(),
+                        time: runtime,
                         trace,
                     };
-                    println!(" Time: {:?}", &start.elapsed());
+                    println!(" Time: {:?}", &runtime);
                     println!(" Operations: {:?}", &data.trace.ops.len());
                     let mut buffer = String::with_capacity(10_000_000);
+                    write!(&mut buffer, "Metadata {:?}\n", &runtime).unwrap();
                     for op in &data.trace.ops {
                         write!(
                             &mut buffer,
@@ -543,10 +547,9 @@ fn cargo_ptrace() {
                 }
             }
         }
-    }
 
-    let query_path =
-        r#"C:\Users\josep\dev\gsoc\cargo\cargo-semver-checks\src\lints\function_missing.ron"#;
+        drop(_span);
+    }
 
     println!("Total Time: {:?}", total_time.elapsed());
 }
