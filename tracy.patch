@@ -1,0 +1,178 @@
+diff --git a/trustfall_core/src/interpreter/ptrace.rs b/trustfall_core/src/interpreter/ptrace.rs
+index a648ea0..a6649b8 100644
+--- a/trustfall_core/src/interpreter/ptrace.rs
++++ b/trustfall_core/src/interpreter/ptrace.rs
+@@ -152,7 +152,7 @@ where
+             Some(d),
+         );
+         result
+-    }))
++    }, "ProduceQueryResult".to_owned()))
+ }
+ 
+ pub struct PerfSpanIter<I, T, F>
+@@ -162,6 +162,7 @@ where
+ {
+     inner: I,
+     post_action: F,
++    span_name: String,
+ }
+ 
+ impl<I, T, F> Iterator for PerfSpanIter<I, T, F>
+@@ -172,8 +173,7 @@ where
+     type Item = T;
+ 
+     fn next(&mut self) -> Option<Self::Item> {
+-        // let _rng = rand::random::<u64>();
+-        // let _span = tracy_client::Client::running().unwrap().span_alloc(Some(&format!("{}", _rng)), "test", "ptrace.rs", 177, 0);
++        let _span = tracy_client::Client::running().unwrap().span_alloc(Some(&self.span_name), "test", "ptrace.rs", 177, 0);
+         let start = Instant::now();
+         let item = self.inner.next();
+         let time = start.elapsed();
+@@ -184,12 +184,12 @@ where
+     }
+ }
+ 
+-pub fn make_iter_with_perf_span<I, T, F>(inner: I, post_action: F) -> PerfSpanIter<I, T, F>
++pub fn make_iter_with_perf_span<I, T, F>(inner: I, post_action: F, span_name: String) -> PerfSpanIter<I, T, F>
+ where
+     I: Iterator<Item = T>,
+     F: Fn(T, Duration) -> T,
+ {
+-    PerfSpanIter { inner, post_action }
++    PerfSpanIter { inner, post_action, span_name }
+ }
+ 
+ impl<'vertex, AdapterT> Adapter<'vertex> for PAdapterTap<'vertex, AdapterT>
+@@ -213,6 +213,8 @@ where
+         );
+         drop(trace);
+ 
++        let span_name = format!("{:?}", FunctionCall::ResolveStartingVertices(resolve_info.vid()));
++
+         let inner_iter = self.inner.resolve_starting_vertices(edge_name, parameters, resolve_info);
+         let tracer_ref_1 = self.tracer.clone();
+         let tracer_ref_2 = self.tracer.clone();
+@@ -224,7 +226,7 @@ where
+                 Some(d),
+             );
+             v
+-        });
++        }, span_name);
+ 
+         Box::new(make_iter_with_end_action(x, move || {
+             tracer_ref_2.borrow_mut().record(
+@@ -254,6 +256,12 @@ where
+         );
+         drop(trace);
+ 
++        let span_name = format!("{:?}", FunctionCall::ResolveProperty(
++                resolve_info.vid(),
++                type_name.clone(),
++                property_name.clone(),
++            ));
++
+         let tracer_ref_1 = self.tracer.clone();
+         let tracer_ref_2 = self.tracer.clone();
+         let tracer_ref_3 = self.tracer.clone();
+@@ -261,7 +269,7 @@ where
+         let x = make_iter_with_perf_span(contexts, move |context, d| {
+             tracer_ref_3.borrow_mut().record(PTraceOpContent::YieldInto, Some(call_opid), Some(d));
+             context
+-        });
++        }, span_name.clone());
+ 
+         let wrapped_contexts = Box::new(make_iter_with_end_action(
+             make_iter_with_pre_action(x, move || {
+@@ -297,7 +305,7 @@ where
+                 Some(d),
+             );
+             (context, value)
+-        });
++        }, span_name);
+ 
+         Box::new(make_iter_with_end_action(x, move || {
+             tracer_ref_4.borrow_mut().record(
+@@ -328,6 +336,12 @@ where
+         );
+         drop(trace);
+ 
++        let span_name = format!("{:?}", FunctionCall::ResolveNeighbors(
++                resolve_info.origin_vid(),
++                type_name.clone(),
++                resolve_info.eid(),
++        ));
++
+         let tracer_ref_1 = self.tracer.clone();
+         let tracer_ref_2 = self.tracer.clone();
+         let tracer_ref_3 = self.tracer.clone();
+@@ -335,7 +349,7 @@ where
+         let x = make_iter_with_perf_span(contexts, move |context, d| {
+             tracer_ref_3.borrow_mut().record(PTraceOpContent::YieldInto, Some(call_opid), Some(d));
+             context
+-        });
++        }, span_name.clone());
+ 
+         let wrapped_contexts = Box::new(make_iter_with_end_action(
+             make_iter_with_pre_action(x, move || {
+@@ -365,6 +379,8 @@ where
+         let tracer_ref_4 = self.tracer.clone();
+         let tracer_ref_5 = self.tracer.clone();
+ 
++        let span_name_2 = span_name.clone();
++
+         let x = make_iter_with_perf_span(inner_iter, move |(context, neighbor_iter), d| {
+             let mut trace = tracer_ref_5.borrow_mut();
+             let outer_iterator_opid = trace.record(
+@@ -395,7 +411,10 @@ where
+                         Some(d),
+                     );
+                     (pos, vertex)
+-                })
++                // FIXME: I don't think it's correct to set the name for the ResolveNeighborsInner
++                //  to a ResolveNeighborsOuter. However, a completely distinct name
++                // would lead to far more than 32k source locations.
++                }, span_name_2.clone())
+                 .map(move |(_, vertex)| vertex),
+             );
+ 
+@@ -410,7 +429,7 @@ where
+                 }));
+ 
+             (context, final_neighbor_iter)
+-        });
++        }, span_name);
+ 
+         Box::new(make_iter_with_end_action(x, move || {
+             tracer_ref_4.borrow_mut().record(
+@@ -440,6 +459,12 @@ where
+         );
+         drop(trace);
+ 
++        let span_name = format!("{:?}", FunctionCall::ResolveCoercion(
++                resolve_info.vid(),
++                type_name.clone(),
++                coerce_to_type.clone(),
++        ));
++
+         let tracer_ref_1 = self.tracer.clone();
+         let tracer_ref_2 = self.tracer.clone();
+         let tracer_ref_3 = self.tracer.clone();
+@@ -447,7 +472,7 @@ where
+         let x = Box::new(make_iter_with_perf_span(contexts, move |context, d| {
+             tracer_ref_3.borrow_mut().record(PTraceOpContent::YieldInto, Some(call_opid), Some(d));
+             context
+-        }));
++        }, span_name.clone()));
+ 
+         let wrapped_contexts = Box::new(make_iter_with_end_action(
+             make_iter_with_pre_action(x, move || {
+@@ -479,7 +504,7 @@ where
+                 Some(d),
+             );
+             (context, can_coerce)
+-        }));
++        }, span_name));
+ 
+         Box::new(make_iter_with_end_action(x, move || {
+             tracer_ref_4.borrow_mut().record(
