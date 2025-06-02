@@ -445,8 +445,8 @@ pub enum InheritedValue {
 
 fn cargo_ptrace() {
     let total_time = Instant::now();
-    let current_path = r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\serde.json"#;
-    let baseline_path = r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\serde_old.json"#;
+    let current_path = r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\aws_sdk_ec2.json"#;
+    let baseline_path = r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\aws_sdk_ec2.json"#;
 
     let current_rustdoc: trustfall_rustdoc_adapter::Crate =
         serde_json::from_str(&std::fs::read_to_string(current_path).unwrap()).unwrap();
@@ -533,7 +533,7 @@ fn cargo_ptrace() {
                     }
                     // println!("Buffer len: {}", buffer.len());
 
-                    let mut out_path = r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\outputs_post\"#.to_owned();
+                    let mut out_path = r#"C:\Users\josep\dev\gsoc\cargo\trustfall\scripts\outputs_post_ec2\"#.to_owned();
                     out_path.push_str(&entry.file_name().to_string_lossy());
                     out_path.push_str(".ptrace.txt");
                     std::fs::write(
